@@ -6,6 +6,18 @@ overlay**, and shows you **one diff** to commit or discard. Committed changes ca
 journal. A local **RAG knowledge base** (SQLite + embeddings + full-text search) lets both you and the agent
 search your files and notes by meaning.
 
+It also works outside your project folder, through the same kernel:
+
+- **Email** (IMAP/SMTP, or a local demo mailbox): read, search and draft freely; every send asks you first.
+- **Calendar and meetings**: a local `.ics` calendar, video-call links, invitations by email after approval.
+- **Notes** in a Home folder (`~/Notes`) that shares one transaction with your workspace.
+- **Browser control** of the installed Edge or Chrome: reading a site needs a per-domain grant, every click
+  or keystroke is shown to you first.
+- **Schedules** (cron, intervals, one-off) as timer interrupts, and **listeners** for file changes, new
+  email and local webhooks. Their changes still wait for your review unless you allow automatic commits.
+
+See `docs/AGENTIC.md`.
+
 ```
 ┌──────────────────────────── Tauri 2 desktop shell (Rust) ─────────────────────────────┐
 │  React + TypeScript UI  ── HTTP + SSE (Bearer token) ──►  FastAPI backend (Python)     │
@@ -15,7 +27,10 @@ search your files and notes by meaning.
 │                                                           │  capabilities, overlay FS,  │
 │                                                           │  journal (commit/undo)      │
 │                                                           ├─ Tools (workspace, apps,    │
-│                                                           │  system, search_knowledge)  │
+│                                                           │  system, knowledge, notes,  │
+│                                                           │  calendar, email, browser)  │
+│                                                           ├─ Automation: schedules      │
+│                                                           │  (timers), listeners        │
 │                                                           ├─ RAG: chunker, embedders,   │
 │                                                           │  vectors + FTS5, hybrid RRF │
 │                                                           └─ SQLite (one local file)    │
@@ -75,13 +90,15 @@ Pause / Resume / Cancel map to the STOP / CONT / TERM signals. Everything is in 
 |---|---|
 | `backend/agentic_os/kernel/` | processes, scheduler, I/O drivers, capabilities, overlay, journal, planners |
 | `backend/agentic_os/rag/` | chunker, embedders (local / Ollama / OpenAI / Gemini), knowledge base |
-| `backend/agentic_os/api/` | FastAPI app, app state, SSE |
+| `backend/agentic_os/api/` | FastAPI app, app state, SSE, agentic routes |
+| `backend/agentic_os/services/` | mail (IMAP/SMTP + local mailbox), calendar (iCalendar), browser (Playwright) |
+| `backend/agentic_os/automation/` | cron parser, schedules and listeners store, listener service |
 | `backend/agentic_os/tools/` | typed tools, path guard, executor |
 | `backend/agentic_os/policy/`, `security/`, `providers/`, `persistence/` | policy engine, auth + secrets, LLM providers, SQLite |
 | `backend/tests/` | kernel (incl. deterministic crash simulation), RAG, API |
-| `frontend/src/` | React UI: Tasks, Knowledge, Settings |
+| `frontend/src/` | React UI (Eagle Eye design system): Home, Tasks, Inbox, Calendar, Notes, Automations, Browser, Knowledge, Settings |
 | `frontend/src-tauri/` | Tauri 2 shell (Rust) |
-| `docs/` | `KERNEL.md`, `RAG.md`, `BUILD_PLAN.md`, `PROGRESS.md`, `TESTING.md` |
+| `docs/` | `KERNEL.md`, `RAG.md`, `AGENTIC.md`, `BUILD_PLAN.md`, `PROGRESS.md`, `TESTING.md` |
 
 ## Security model, briefly
 

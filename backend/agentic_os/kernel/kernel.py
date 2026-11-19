@@ -31,9 +31,10 @@ from ..tools.base import RiskLevel, ToolContext, ToolError
 from ..tools.executor import ToolExecutor
 from ..tools.pathguard import PathError
 from ..util import bounded_json, new_id, utc_now_iso
-from .capabilities import IRREVERSIBLE_TOOL_CAPS, TOOL_CAP_MAP, Capability, CapabilityError, CapabilityTable
+from .capabilities import GRANTABLE_TOOL_CAPS, IRREVERSIBLE_TOOL_CAPS, TOOL_CAP_MAP, cap_resource, Capability, CapabilityError, CapabilityTable
 from .io import Completion, IODriver
 from .journal import CommitConflict, Journal
+from .mounts import MountedWorkspace, to_home
 from .overlay import OverlayWorkspace
 from .planner import Planner, RefError, iter_refs, ref_step, resolve_refs, validate_plan
 from .process import (DONE_STATES, LIVE_STATES, Budget, ExitCode, Phase, Priority, ProcessControlBlock, ProcState,
@@ -79,6 +80,8 @@ class Kernel:
         fork_enabled: bool = True,
         budget: Optional[Budget] = None,
         services: Optional[Dict[str, Any]] = None,
+        home_root: Optional[str] = None,
+        automation: Any = None,
     ):
         self.db = db
         self.registry = registry
@@ -104,6 +107,9 @@ class Kernel:
         self.fork_enabled = fork_enabled
         self.default_budget = budget or Budget()
         self.services: Dict[str, Any] = dict(services or {})
+        self.home_root = os.path.realpath(home_root) if home_root else None
+        self.automation = automation
+        self._timer_checked = 0.0
 
         self.procs: Dict[str, ProcessControlBlock] = {}
         self.runq = RunQueue()
@@ -229,7 +235,8 @@ class Kernel:
         return actions
 
     # ============================================================== spawning
-    def spawn(self, request: str, *, title: Optional[str] = None, budget: Optional[dict] = None) -> str:
+    def spawn(self, request: str, *, title: Optional[str] = None, budget: Optional[dict] = None,
+              auto_commit: bool = False, origin: Optional[dict] = None, plan: Optional[dict] = None) -> str:
         def do() -> str:
             if not str(request or "").strip():
                 raise KernelError("REQUEST_EMPTY", "Describe what the task should do.")
@@ -240,17 +247,19 @@ class Kernel:
             pcb = ProcessControlBlock(
                 pid=pid, task_id=task_id, request=request.strip(), title=(title or request.strip())[:120],
                 created_at=now, deadline_at=now + float(b["wall_clock_s"]), overlay_id=pid, budget=b,
+                auto_commit=bool(auto_commit), origin=origin, preset_plan=copy.deepcopy(plan) if plan else None,
             )
             self.tasks.create({"id": task_id, "title": pcb.title, "request": pcb.request, "status": "running",
                                "planner_mode": self.planner.kind, "thread_id": pid})
-            for kind, scope, rights in (("fs", "", ("read", "write")), ("sys", "*", ("read",)), ("compute", "*", ("use",))):
+            for kind, scope, rights in (("fs", "", ("read", "write")), ("sys", "*", ("read",)), ("compute", "*", ("use",)),
+                                       ("mail", "*", ("read",))):
                 pcb.caps.append(self.caps.grant(pid, kind, scope, rights, origin="spawn").cap_id)
             self.procs[pid] = pcb
             self._cancel[pid] = threading.Event()
             self.runq.push(pid, pcb.priority)
             self._save(pcb)
             self._emit(pcb, "proc.spawn", f"Process started: {pcb.title}", request=pcb.request,
-                       capabilities=self.caps.public(pid))
+                       capabilities=self.caps.public(pid), origin=pcb.origin or {"kind": "user"})
             return pid
 
         return self._command(do)
@@ -285,6 +294,8 @@ class Kernel:
             self._deliver(c)
             worked = True
         self._check_deadlines()
+        if self._fire_timers():
+            worked = True
         pid = self.runq.pop()
         if pid is None:
             return worked
@@ -357,6 +368,26 @@ class Kernel:
             pcb.stopped_from = ProcState.READY.value
         self._save(pcb)
 
+    def _fire_timers(self) -> bool:
+        """Timer interrupts: start every schedule that is due (checked at most once per second)."""
+        if self.automation is None:
+            return False
+        now = self.clock()
+        if now - self._timer_checked < 1.0:
+            return False
+        self._timer_checked = now
+        fired = False
+        for sch in self.automation.due(now):
+            try:
+                pid = self.spawn(sch["request"], title=sch["name"], auto_commit=sch["auto_commit"],
+                                 origin={"kind": "schedule", "id": sch["id"], "name": sch["name"]})
+            except Exception:  # noqa: BLE001 - a bad schedule must not stop the kernel
+                log.exception("schedule %s failed to start", sch["id"])
+                pid = None
+            self.automation.mark_fired(sch["id"], pid, now)
+            fired = True
+        return fired
+
     def _check_deadlines(self) -> None:
         now = self.clock()
         for pcb in list(self.procs.values()):
@@ -409,23 +440,29 @@ class Kernel:
 
     # ============================================================== helpers
     def _overlay(self, pcb: ProcessControlBlock, *, kernel_view: bool = False,
-                 caps: Optional[List[Capability]] = None) -> OverlayWorkspace:
-        upper = os.path.join(self.data_dir, "overlays", pcb.overlay_id or pcb.pid, "upper")
-        cap_check = None
+                 caps: Optional[List[Capability]] = None):
+        """The process's view of the file system: workspace overlay, plus the Home mount (`~/`) if configured."""
+        oid = pcb.overlay_id or pcb.pid
+        base = os.path.join(self.data_dir, "overlays", oid)
+        check = None
         if not kernel_view:
             snapshot = caps if caps is not None else [copy.copy(c) for c in self.caps.held(pcb.pid)]
             from .capabilities import scope_covers
 
-            def cap_check(rel: str, right: str) -> None:
+            def check(rel: str, right: str) -> None:
                 for cap in snapshot:
                     if cap.kind == "fs" and right in cap.rights and scope_covers(cap.scope, rel, "fs"):
                         return
-                raise PathError("PATH_CAPABILITY_DENIED",
-                                f"This task has no '{right}' capability for '{rel}'.")
+                raise PathError("PATH_CAPABILITY_DENIED", f"This task has no '{right}' capability for '{rel}'.")
         settings = self.settings_fn() or {}
-        return OverlayWorkspace(self.workspace_root, upper, pcb.overlay_id or pcb.pid, self.store,
-                                cap_check=cap_check, sensitive_patterns=settings.get("sensitive_patterns"),
-                                ignored_dirs=settings.get("ignored_dirs"))
+        kw = dict(sensitive_patterns=settings.get("sensitive_patterns"), ignored_dirs=settings.get("ignored_dirs"))
+        ws = OverlayWorkspace(self.workspace_root, os.path.join(base, "upper"), oid, self.store, cap_check=check, **kw)
+        if not self.home_root:
+            return ws
+        home_check = (lambda rel, right: check(to_home(rel), right)) if check else None
+        home = OverlayWorkspace(self.home_root, os.path.join(base, "home_upper"), oid + "~home", self.store,
+                                cap_check=home_check, **kw)
+        return MountedWorkspace(ws, home)
 
     def _ctx(self, pcb: ProcessControlBlock, step: dict, workspace, expected_state: Optional[dict] = None) -> ToolContext:
         cancel = self._cancel.setdefault(pcb.pid, threading.Event())
@@ -448,9 +485,9 @@ class Kernel:
                 if not any(c.kind == "fs" and right in c.rights for c in self.caps.held(pcb.pid)):
                     return f"process holds no fs:{right} capability", None
                 continue
-            resource = str(args.get("app_id") or "*") if kind == "app" else "*"
+            resource = cap_resource(kind, args)
             if self.caps.find(pcb.pid, kind, right, resource) is None:
-                if name in IRREVERSIBLE_TOOL_CAPS and not pcb.is_child:
+                if name in GRANTABLE_TOOL_CAPS and not pcb.is_child:
                     return None, {"kind": kind, "right": right, "scope": resource}
                 return f"process holds no {kind}:{right} capability for {resource!r}", None
         return None, None
@@ -491,6 +528,12 @@ class Kernel:
                      for sid, st in pcb.steps_state.items() if st.get("status") == "done"]
         catalog = self.registry.llm_catalog()
         planner, request, feedback, clar = self.planner, pcb.request, pcb.planner_feedback, pcb.clarification
+        if pcb.preset_plan and pcb.plan_version == 0 and not feedback:
+            preset = copy.deepcopy(pcb.preset_plan)
+            self._task_status(pcb, "planning")
+            self._emit(pcb, "syscall.enter", "Using the plan supplied with the request", syscall="plan")
+            self._io(pcb, "plan", lambda: {"plan": preset, "usage": {}}, Phase.PLAN, Phase.VALIDATE)
+            return
         self._task_status(pcb, "planning")
         self._emit(pcb, "syscall.enter", "Planning" if not feedback else "Replanning", syscall="plan")
         self._io(pcb, "plan", lambda: planner.plan(request, catalog, feedback=feedback, completed=completed,
@@ -609,7 +652,8 @@ class Kernel:
         overlay = self._overlay(pcb)
         if irreversible and not pcb.post_commit:
             staged = {c["rel_path"] for c in overlay.changes()}
-            refs = {str(args.get(k)).replace("\\", "/").strip("/") for k in ("file", "path") if args.get(k)}
+            refs = {str(args.get(k)).replace("\\", "/").strip("/") for k in ("file", "path", "draft") if args.get(k)}
+            refs |= {str(x).replace("\\", "/").strip("/") for x in (args.get("attachments") or []) if x}
             if refs & staged:
                 st["status"] = "deferred"
                 pcb.outbox.append(sid)
@@ -668,7 +712,7 @@ class Kernel:
         for name in spec.capabilities:
             if name in IRREVERSIBLE_TOOL_CAPS:
                 kind, right = TOOL_CAP_MAP[name]
-                cap = self.caps.find(pcb.pid, kind, right, str((step.get("args") or {}).get("app_id") or "*"))
+                cap = self.caps.find(pcb.pid, kind, right, cap_resource(kind, self._args(pcb, step)))
                 if cap is None:
                     st["last_error"] = {"code": "CAP_DENIED", "message": "capability expired before execution",
                                         "retryable": False}
@@ -800,6 +844,11 @@ class Kernel:
                 pcb.phase = Phase.FINALIZE.value
             return
         outcome = (pcb.exit or {}).get("pending_failure")
+        if pcb.auto_commit and not outcome:
+            self._emit(pcb, "txn.auto_commit", f"Committing {len(files)} change(s) automatically (undo is available)",
+                       files=[{"path": f["path"], "op": f["op"]} for f in files])
+            pcb.phase = Phase.COMMIT.value
+            return
         pcb.pending_user = {"kind": "review", "files": bounded_json(files, max_chars=200000, max_str=60000),
                             "outbox": list(pcb.outbox), "outcome": "failed" if outcome else "succeeded",
                             "failure": outcome}
@@ -981,6 +1030,12 @@ class Kernel:
         self._task_status(pcb, status, **extra)
         self._emit(pcb, "proc.exit", f"Process exited: {code.value}", code=code.value, reason=reason,
                    txn_id=pcb.txn_id)
+        hook = self.services.get("on_exit")
+        if hook is not None:
+            try:
+                hook(pcb.pid, pcb.task_id, code.value)
+            except Exception:  # noqa: BLE001 - resource cleanup must never break the kernel
+                log.exception("on_exit hook failed")
 
     # ============================================================== user API
     def signal(self, pid: str, sig: str) -> dict:

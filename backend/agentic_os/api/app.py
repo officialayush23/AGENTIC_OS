@@ -57,6 +57,7 @@ class PairIn(BaseModel):
 class TaskIn(BaseModel):
     request: str = Field(min_length=1, max_length=8000)
     title: Optional[str] = Field(None, max_length=120)
+    plan: Optional[Dict[str, Any]] = None      # optional explicit plan (validated and policy-checked like any plan)
 
 
 class ApproveIn(BaseModel):
@@ -85,6 +86,9 @@ class SettingsIn(BaseModel):
     allow_app_launch: Optional[bool] = None
     rag_auto_index: Optional[bool] = None
     rag_embedder: Optional[Dict[str, Any]] = None
+    browser_headed: Optional[bool] = None
+    browser_channel: Optional[Literal["msedge", "chrome", "auto"]] = None
+    web_allow_private: Optional[bool] = None
 
 
 class ProviderIn(BaseModel):
@@ -236,6 +240,11 @@ def create_app(settings: Settings, state: Optional[AppState] = None, *, start_ba
             },
             "knowledge": {**st.kb.status(), "index_job": st.index_job.public()},
             "credential_store": st.secrets.status(),
+            "automation": {"schedules": len([s for s in st.automation.list_schedules() if s["enabled"]]),
+                           "listeners": len([x for x in st.automation.list_listeners() if x["enabled"]]),
+                           "next_run": st.automation.min_next_run()},
+            "mail": st.mail.status(),
+            "home_root": st.home_root,
         }
 
     # -------------------------------------------------------- settings
@@ -246,6 +255,9 @@ def create_app(settings: Settings, state: Optional[AppState] = None, *, start_ba
     @api.put("/settings")
     async def put_settings(body: SettingsIn):
         data = body.model_dump(exclude_none=True)
+        if data.get("browser_channel") == "auto":
+            data["browser_channel"] = None
+            st.repos.settings.set("browser_channel", None)
         if "workspace_root" in data:
             try:
                 await asyncio.to_thread(st.set_workspace, data.pop("workspace_root"))
@@ -272,7 +284,7 @@ def create_app(settings: Settings, state: Optional[AppState] = None, *, start_ba
 
     @api.post("/tasks")
     async def create_task(body: TaskIn):
-        pid = st.kernel.spawn(body.request, title=body.title)
+        pid = st.kernel.spawn(body.request, title=body.title, plan=body.plan)
         return _task_view(st.kernel.proc(pid))
 
     @api.get("/tasks")
@@ -484,6 +496,8 @@ def create_app(settings: Settings, state: Optional[AppState] = None, *, start_ba
     async def delete_app(app_id: str):
         return {"deleted": st.repos.apps.delete(app_id)}
 
+    from .routes_agentic import register as register_agentic
+    register_agentic(api, app, st, ApiError)
     app.include_router(api)
 
     # --------------------------------------------------------- static UI (browser mode)

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from ..tools.fileio import atomic_replace, sha256_file
+from .mounts import lower_path
 
 FaultHook = Callable[[str], None]
 
@@ -72,7 +73,9 @@ class Journal:
                 "seq": seq, "rel_path": ch["rel_path"], "op": ch["op"], "before_sha256": ch["base_sha256"],
                 "after_sha256": ch["after_sha256"], "before_blob": before_blob, "after_blob": after_blob,
             })
-        summary = {"root": overlay.root, "files": [{"path": e["rel_path"], "op": e["op"]} for e in entries]}
+        roots = dict(getattr(overlay, "roots", None) or {"": overlay.root})
+        summary = {"root": overlay.root, "roots": roots,
+                   "files": [{"path": e["rel_path"], "op": e["op"]} for e in entries]}
         self.store.create_txn(txn_id, pid, task_id, overlay.overlay_id, entries, summary)
         self.fault("prepared")
         self.store.set_txn_state(txn_id, "COMMITTING")          # commit point
@@ -81,19 +84,20 @@ class Journal:
         overlay.discard()
         return {"txn_id": txn_id, "files": summary["files"]}
 
-    def _root(self, txn: dict) -> str:
-        root = (txn.get("summary") or {}).get("root")
-        if not root:
+    def _roots(self, txn: dict) -> dict:
+        summary = txn.get("summary") or {}
+        roots = summary.get("roots") or ({"": summary["root"]} if summary.get("root") else None)
+        if not roots:
             raise JournalError(f"transaction {txn['txn_id']} has no workspace root")
-        return root
+        return roots
 
     def _apply(self, txn_id: str) -> None:
         txn = self.store.get_txn(txn_id)
-        root = self._root(txn)  # type: ignore[arg-type]
+        roots = self._roots(txn)  # type: ignore[arg-type]
         for e in self.store.txn_entries(txn_id):
             if e["state"] == "APPLIED":
                 continue
-            lower = os.path.join(root, *e["rel_path"].split("/"))
+            lower = lower_path(roots, e["rel_path"])
             if _sha_or_none(lower) == e["after_sha256"]:
                 self.store.set_entry(txn_id, e["seq"], "APPLIED")   # already applied before a crash
                 continue
@@ -105,7 +109,7 @@ class Journal:
                 parent = parent.parent
             for folder in reversed(missing):
                 folder.mkdir(exist_ok=True)
-                created.append(os.path.relpath(str(folder), root).replace("\\", "/"))
+                created.append(str(folder))          # absolute: entries may live under different mounts
             with open(e["after_blob"], "rb") as fh:
                 data = fh.read()
             atomic_replace(lower, data)
@@ -120,12 +124,12 @@ class Journal:
             raise JournalError("unknown transaction")
         if txn["state"] not in ("COMMITTED", "UNDOING"):
             raise JournalError(f"cannot undo a transaction in state {txn['state']}")
-        root = self._root(txn)
+        roots = self._roots(txn)
         conflicts = []
         for e in self.store.txn_entries(txn_id):
             if e["state"] == "COMPENSATED":
                 continue
-            lower = os.path.join(root, *e["rel_path"].split("/"))
+            lower = lower_path(roots, e["rel_path"])
             current = _sha_or_none(lower)
             if current not in (e["after_sha256"], e["before_sha256"]):
                 conflicts.append({"path": e["rel_path"], "reason": "edited after the commit; undo would lose those edits"})
@@ -137,11 +141,11 @@ class Journal:
 
     def _undo_apply(self, txn_id: str) -> None:
         txn = self.store.get_txn(txn_id)
-        root = self._root(txn)  # type: ignore[arg-type]
+        roots = self._roots(txn)  # type: ignore[arg-type]
         for e in reversed(self.store.txn_entries(txn_id)):
             if e["state"] == "COMPENSATED":
                 continue
-            lower = os.path.join(root, *e["rel_path"].split("/"))
+            lower = lower_path(roots, e["rel_path"])
             if e["op"] == "modify":
                 if _sha_or_none(lower) != e["before_sha256"]:
                     with open(e["before_blob"], "rb") as fh:
@@ -150,7 +154,7 @@ class Journal:
                 if os.path.isfile(lower):
                     os.remove(lower)
             for rel_dir in reversed(e["created_dirs"]):
-                d = os.path.join(root, *rel_dir.split("/"))
+                d = rel_dir if os.path.isabs(rel_dir) else lower_path(roots, rel_dir)
                 try:
                     os.rmdir(d)         # only removes empty folders
                 except OSError:

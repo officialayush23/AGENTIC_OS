@@ -39,6 +39,7 @@ export type PendingUser =
       effect: string;
       grant: { kind: string; right: string; scope: string } | null;
       irreversible: boolean;
+      preview?: any;
     }
   | { kind: "clarify"; question: string }
   | {
@@ -71,6 +72,8 @@ export interface Task {
   exit: { code: string; reason: string; summary?: unknown } | null;
   txn_id: string | null;
   replans: number;
+  auto_commit?: boolean;
+  origin?: { kind: "user" | "schedule" | "listener"; id?: string; name?: string; trigger?: string; manual?: boolean };
   created_at?: string;
   status?: string;
 }
@@ -114,3 +117,27 @@ export interface Provider {
   credential: { stored: boolean; required: boolean; store_available: boolean; error?: string | null };
   last_test?: { ok?: boolean; message?: string } | null;
 }
+
+export interface Schedule {
+  id: string; name: string; request: string; kind: "cron" | "interval" | "once"; spec: string; label: string;
+  enabled: boolean; auto_commit: boolean; next_run: number | null; last_run: number | null; last_pid: string | null;
+  run_count: number; created_at: string;
+}
+
+export interface Listener {
+  id: string; name: string; kind: "file" | "email" | "webhook"; request: string; config: Record<string, any>;
+  enabled: boolean; auto_commit: boolean; cooldown_s: number; last_fired: number | null; fire_count: number;
+  last_error: string | null; has_secret: boolean; secret?: string; created_at: string;
+}
+
+export interface MailMsg {
+  id: string; uid: string; folder: string; subject: string; from: string; to: string; cc: string; date: string | null;
+  message_id: string; seen: boolean; snippet: string; attachments: string[]; body?: string;
+}
+
+export interface CalEvent {
+  uid: string; title: string; start: string; end?: string; location?: string; description?: string; url?: string;
+  attendees: string[]; organizer?: string;
+}
+
+export interface NoteInfo { path: string; title: string; snippet: string; size: number; modified: number; content?: string; sha256?: string }

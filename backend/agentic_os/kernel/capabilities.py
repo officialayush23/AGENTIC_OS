@@ -20,7 +20,8 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from ..util import utc_now_iso
 
-KINDS = {"fs": {"read", "write"}, "app": {"launch"}, "sys": {"read"}, "compute": {"use"}}
+KINDS = {"fs": {"read", "write"}, "app": {"launch"}, "sys": {"read"}, "compute": {"use"},
+         "mail": {"read", "send"}, "web": {"read", "act"}}
 
 # Tool-level capability names (ToolSpec.capabilities) -> (kind, right)
 TOOL_CAP_MAP: Dict[str, Tuple[str, str]] = {
@@ -30,10 +31,34 @@ TOOL_CAP_MAP: Dict[str, Tuple[str, str]] = {
     "system.read": ("sys", "read"),
     "apps.launch": ("app", "launch"),
     "compute": ("compute", "use"),
+    "mail.read": ("mail", "read"),
+    "mail.send": ("mail", "send"),
+    "web.read": ("web", "read"),
+    "web.act": ("web", "act"),
 }
 
-# Capabilities whose actions cannot be staged in the overlay.
-IRREVERSIBLE_TOOL_CAPS = {"apps.launch"}
+# Capabilities whose actions cannot be staged in the overlay (they leave the computer or launch things).
+IRREVERSIBLE_TOOL_CAPS = {"apps.launch", "mail.send", "web.act"}
+# Capabilities a process does not hold at spawn but may be granted by the user on request.
+GRANTABLE_TOOL_CAPS = IRREVERSIBLE_TOOL_CAPS | {"web.read"}
+
+
+def url_domain(url: str) -> str:
+    from urllib.parse import urlsplit
+    text = str(url or "").strip()
+    if "://" not in text:
+        text = "https://" + text
+    host = (urlsplit(text).hostname or "").lower().rstrip(".")
+    return host[4:] if host.startswith("www.") else host
+
+
+def cap_resource(kind: str, args: dict) -> str:
+    """The resource an action touches, for capability checks."""
+    if kind == "app":
+        return str(args.get("app_id") or "*")
+    if kind == "web":
+        return url_domain(args.get("url") or args.get("domain") or "") or "*"
+    return "*"
 
 
 class CapabilityError(Exception):
@@ -69,6 +94,8 @@ def norm_scope(scope: str) -> str:
 
 def scope_covers(scope: str, rel: str, kind: str) -> bool:
     """Does capability `scope` cover resource `rel`?"""
+    if kind == "web":
+        return scope == "*" or rel == scope or rel.endswith("." + scope)
     if kind != "fs":
         return scope == "*" or scope == rel
     scope = norm_scope(scope)
@@ -79,6 +106,8 @@ def scope_covers(scope: str, rel: str, kind: str) -> bool:
 
 
 def scope_within(child: str, parent: str, kind: str) -> bool:
+    if kind == "web":
+        return scope_covers(parent, child, "web")
     if kind != "fs":
         return parent == "*" or child == parent
     return scope_covers(parent, child, "fs")

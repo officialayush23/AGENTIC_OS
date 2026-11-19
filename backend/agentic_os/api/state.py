@@ -11,7 +11,12 @@ from typing import Any, Callable, Dict, Optional
 from ..config import Settings
 from ..events import EventBus
 from ..kernel import HybridPlanner, Kernel, LLMPlanner, ThreadPoolIO
+from ..automation.listeners import ListenerService
+from ..automation.store import AutomationStore
+from ..kernel.mounts import MountedWorkspace, split_home
 from ..kernel.process import DONE_STATES, ProcState
+from ..services.browser import BrowserService
+from ..services.mail import MailService
 from ..persistence.db import Database
 from ..persistence.repositories import Repositories
 from ..policy.engine import PolicyEngine
@@ -32,6 +37,20 @@ DEFAULT_USER_SETTINGS: Dict[str, Any] = {
     "allow_app_launch": True,
     "rag_embedder": {"kind": "local"},
     "rag_auto_index": True,
+    "mail": {"mode": "local", "address": "you@agentic-os.local"},
+    "browser_headed": False,              # show the browser window while the agent uses it
+    "browser_channel": None,              # msedge | chrome | None (auto)
+    "web_allow_private": False,           # allow opening pages on the local network / localhost
+}
+
+HOME_SEED = {
+    "Notes/Welcome.md": "# Welcome to your Home folder\n\nNotes live here as plain markdown files. The agent can "
+                        "create and edit them, and every change is staged for your review like any other file.\n\n"
+                        "- `~/Notes` - notes\n- `~/Calendar/calendar.ics` - your local calendar (any calendar app "
+                        "can import it)\n- `~/Mail/Outbox` - email drafts\n",
+    "Calendar/calendar.ics": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Agentic OS//Calendar 1.0//EN\r\n"
+                             "CALSCALE:GREGORIAN\r\nEND:VCALENDAR\r\n",
+    "Mail/Outbox/.keep": "",
 }
 
 DEMO_FILES = {
@@ -75,7 +94,18 @@ class AppState:
         self.index_job = IndexJob()
         self._lock = threading.RLock()
         self.kb = KnowledgeBase(self.db, self._make_embedder())
+        self.home_root = self._home()
+        self.mail = MailService(str(settings.data_dir), self.user_settings, self.secrets)
+        try:
+            self.mail.local.seed_demo()
+        except Exception:  # noqa: BLE001
+            log.exception("could not seed the demo mailbox")
+        self.browser = BrowserService(str(settings.data_dir), self.user_settings)
+        self.automation = AutomationStore(self.db)
         self.kernel: Optional[Kernel] = None
+        self.listeners = ListenerService(
+            self.automation, spawn=lambda *a, **k: self.kernel.spawn(*a, **k), resolve_root=self.listener_root,
+            mail=self.mail, publish=self.events.publish_global)
         self._build_kernel()
 
     # ------------------------------------------------------------- settings
@@ -98,10 +128,36 @@ class AppState:
     def workspace_root(self) -> str:
         return str(self.user_settings()["workspace_root"])
 
+    def _home(self) -> str:
+        root = Path(self.settings.data_dir) / "home"
+        for rel, text in HOME_SEED.items():
+            p = root / rel
+            if not p.exists():
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(text, encoding="utf-8", newline="")
+        return str(root)
+
     def guard(self) -> WorkspaceGuard:
         s = self.user_settings()
         return WorkspaceGuard(self.workspace_root(), sensitive_patterns=s.get("sensitive_patterns"),
                               ignored_dirs=s.get("ignored_dirs"))
+
+    def home_guard(self) -> WorkspaceGuard:
+        s = self.user_settings()
+        return WorkspaceGuard(self.home_root, sensitive_patterns=s.get("sensitive_patterns"),
+                              ignored_dirs=s.get("ignored_dirs"))
+
+    def mounted(self) -> MountedWorkspace:
+        """Read view over both mounts: project paths and `~/` Home paths."""
+        return MountedWorkspace(self.guard(), self.home_guard())
+
+    def listener_root(self, path: str):
+        home, rel = split_home(path)
+        target = self.mounted().resolve(path)
+        if not target.is_dir:
+            raise ValueError(f"{path} is not a folder")
+        prefix = ("~/" if home else "") + ("" if rel in (".", "") else rel.rstrip("/") + "/")
+        return target.abs_path, prefix
 
     # ------------------------------------------------------------ providers
     def api_key_for(self, provider_id: str) -> Optional[str]:
@@ -148,7 +204,7 @@ class AppState:
             job = IndexJob()
             job.running = True
             self.index_job = job
-        guard = self.guard()
+        guard = self.mounted()
 
         def progress(p: dict) -> None:
             job.progress = p
@@ -157,6 +213,10 @@ class AppState:
         def run() -> None:
             try:
                 job.result = self.kb.index_workspace(guard, path, progress=progress, cancel=job.cancel.is_set)
+                if path == "." and not job.cancel.is_set():
+                    home = self.kb.index_workspace(guard, "~", progress=progress, cancel=job.cancel.is_set)
+                    job.result = {k: (v + home.get(k, 0) if isinstance(v, int) and not isinstance(v, bool) else v)
+                                  for k, v in job.result.items()}
             except Exception as exc:  # noqa: BLE001
                 job.error = getattr(exc, "message", None) or str(exc)
                 log.exception("indexing failed")
@@ -174,12 +234,19 @@ class AppState:
             planner=HybridPlanner(self._llm_planner), io=self.io_factory(),
             workspace_root=self.workspace_root(), data_dir=str(self.settings.data_dir),
             settings_fn=self.user_settings, os_adapter=self.os_adapter, events=self.events,
-            services={"rag": self.kb, "on_commit": self._on_commit},
+            services={"rag": self.kb, "on_commit": self._on_commit, "on_exit": self._on_exit, "mail": self.mail,
+                      "browser": self.browser},
+            home_root=self.home_root, automation=self.automation,
         )
         kernel.boot()
         self.kernel = kernel
 
+    def _on_exit(self, pid: str, task_id: str, code: str) -> None:
+        self.browser.close(task_id)
+
     def _on_commit(self, pid: str, files) -> None:
+        pcb = self.kernel.procs.get(pid) if self.kernel else None
+        self.listeners.note_commit(getattr(pcb, "origin", None), [f.get("path") for f in files or []])
         if self.user_settings().get("rag_auto_index"):
             self.start_index(".")
 
@@ -208,12 +275,15 @@ class AppState:
     def start(self) -> None:
         assert self.kernel is not None
         self.kernel.start()
+        self.listeners.start()
         if self.user_settings().get("rag_auto_index"):
             self.start_index(".")
 
     def stop(self) -> None:
         self.index_job.cancel.set()
+        self.listeners.stop()
         if self.kernel is not None:
             self.kernel.stop()
+        self.browser.stop()
         self.events.close_all()
         self.db.close()

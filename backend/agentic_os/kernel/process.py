@@ -128,6 +128,9 @@ class ProcessControlBlock:
     cancel_requested: bool = False
     exit: Optional[dict] = None                   # {code, reason, summary}
     txn_id: Optional[str] = None
+    auto_commit: bool = False                     # set by schedules/listeners: commit without review (still undoable)
+    origin: Optional[dict] = None                 # {"kind": "user" | "schedule" | "listener", ...}
+    preset_plan: Optional[dict] = None            # a plan supplied with the request (still validated and policy-checked)
 
     # ------------------------------------------------------------------
     def to_json(self) -> dict:
@@ -166,5 +169,6 @@ class ProcessControlBlock:
             "slices": self.slices, "plan": self.plan, "plan_version": self.plan_version,
             "steps_state": self.steps_state, "pending_user": self.pending_user, "outbox": self.outbox,
             "children": self.children, "usage": self.usage, "budget": self.budget, "exit": self.exit,
-            "txn_id": self.txn_id, "replans": self.replans,
+            "txn_id": self.txn_id, "replans": self.replans, "auto_commit": self.auto_commit,
+            "origin": self.origin or {"kind": "user"},
         }

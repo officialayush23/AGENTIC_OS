@@ -3,6 +3,7 @@ fastapi>=0.115
 uvicorn>=0.30
 pydantic>=2.7
 keyring>=25
+playwright>=1.45     # browser control: drives the Edge or Chrome already installed
 numpy>=1.26          # optional: faster vector search (falls back to pure Python)
 # AI providers (imported lazily; only the ones you use need to work)
 openai>=1.40

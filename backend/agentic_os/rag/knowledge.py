@@ -205,6 +205,8 @@ class KnowledgeBase:
         if not stats.get("cancelled") and len(files) < max_files:
             prefix = "" if start.rel == "." else start.rel + "/"
             for row in self.db.query("SELECT id, path FROM rag_documents WHERE source = 'workspace'"):
+                if prefix == "" and row["path"].startswith("~/"):
+                    continue                     # the Home mount is indexed separately
                 if row["path"].startswith(prefix) and row["path"] not in seen:
                     self.delete_document(row["id"])
                     stats["removed"] += 1

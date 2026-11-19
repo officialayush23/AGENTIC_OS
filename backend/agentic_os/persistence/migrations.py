@@ -285,4 +285,52 @@ CREATE INDEX IF NOT EXISTS idx_rag_chunks_doc ON rag_chunks(doc_id, seq);
 CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedder ON rag_chunks(embedder);
 """,
     ),
+    (
+        4,
+        "automation: schedules, listeners, trigger runs",
+        """
+CREATE TABLE IF NOT EXISTS schedules (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    request      TEXT NOT NULL,
+    kind         TEXT NOT NULL,             -- cron | interval | once
+    spec         TEXT NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    auto_commit  INTEGER NOT NULL DEFAULT 0,
+    next_run     REAL,
+    last_run     REAL,
+    last_pid     TEXT,
+    run_count    INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sched_next ON schedules(enabled, next_run);
+
+CREATE TABLE IF NOT EXISTS listeners (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    kind         TEXT NOT NULL,             -- file | email | webhook
+    config_json  TEXT NOT NULL DEFAULT '{}',
+    request      TEXT NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    auto_commit  INTEGER NOT NULL DEFAULT 0,
+    cooldown_s   REAL NOT NULL DEFAULT 60,
+    state_json   TEXT NOT NULL DEFAULT '{}',
+    secret_hash  TEXT,
+    last_fired   REAL,
+    fire_count   INTEGER NOT NULL DEFAULT 0,
+    last_error   TEXT,
+    created_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS trigger_runs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_kind  TEXT NOT NULL,             -- schedule | listener
+    source_id    TEXT NOT NULL,
+    pid          TEXT,
+    fired_at     REAL NOT NULL,
+    detail_json  TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_trig_src ON trigger_runs(source_kind, source_id, fired_at);
+""",
+    ),
 ]

@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
+import { FolderOpen, KeyRound, Mail, Plug, Trash2 } from "lucide-react";
 import { del, get, isDesktop, post, put } from "../api";
+import { useLive } from "../App";
 import type { Provider } from "../types";
+import { Banner, Card, CardHead, Chip, Field, ICON_SM, PageHeader, Seg, Switch, useToast } from "../ui";
 
-export function SettingsView({ onChange }: { onChange: () => void }) {
+type Tab = "general" | "email" | "ai" | "knowledge" | "apps";
+
+export function SettingsView() {
+  const { refresh } = useLive();
+  const toast = useToast();
+  const [tab, setTab] = useState<Tab>("general");
   const [s, setS] = useState<any>(null);
   const [kinds, setKinds] = useState<Record<string, any>>({});
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [ws, setWs] = useState("");
 
   const load = useCallback(async () => {
@@ -17,70 +24,103 @@ export function SettingsView({ onChange }: { onChange: () => void }) {
   useEffect(() => { void load(); }, [load]);
 
   const save = async (patch: Record<string, unknown>, label = "Saved") => {
-    setMsg(null);
-    try {
-      const r = await put("/api/settings", patch);
-      setS(r.settings);
-      setMsg({ ok: true, text: label });
-      onChange();
-    } catch (e: any) {
-      setMsg({ ok: false, text: e.message });
-    }
+    try { const r = await put("/api/settings", patch); setS(r.settings); toast({ title: label }); refresh(); }
+    catch (e: any) { toast({ title: "Not saved", text: e.message, bad: true }); }
   };
-
   const pickFolder = async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     const path = await invoke<string | null>("pick_folder");
     if (path) setWs(path);
   };
 
-  if (!s) return <div className="pad muted">Loading…</div>;
-  const emb = s.rag_embedder ?? { kind: "local" };
+  if (!s) return <p className="muted">Loading…</p>;
   return (
-    <div className="page">
-      <header className="page-head"><h2>Settings</h2></header>
-      {msg && <div className={`notice ${msg.ok ? "" : "notice-bad"}`}>{msg.text}</div>}
+    <>
+      <PageHeader section="System" dot="--ws-system" title="Settings" sub="Everything stays on this computer. Passwords and API keys live in the system credential store." />
+      <Seg label="Settings sections" value={tab} onChange={setTab} items={[
+        { id: "general", label: "General" }, { id: "email", label: "Email" }, { id: "ai", label: "AI providers" },
+        { id: "knowledge", label: "Knowledge" }, { id: "apps", label: "Apps" },
+      ]} />
+      {tab === "general" && <>
+        <Card>
+          <CardHead title="Workspace" sub="The project folder tasks can read and, after your review, change. Files like .env and keys are always off-limits." />
+          <div className="row nowrap">
+            <input className="input mono" aria-label="Workspace folder" value={ws} onChange={(e) => setWs(e.target.value)} />
+            {isDesktop() && <button className="ee-btn outline" onClick={pickFolder}><FolderOpen {...ICON_SM} /> Browse</button>}
+            <button className="ee-btn primary" disabled={ws === s.workspace_root} onClick={() => save({ workspace_root: ws }, "Workspace changed")}>Use folder</button>
+          </div>
+          <p className="muted" style={{ marginBottom: 0 }}>Your Home folder (notes, calendar, mail drafts) is separate and always available as <span className="mono">~/</span>.</p>
+        </Card>
+        <Card>
+          <CardHead title="Behaviour" />
+          <div className="stack" style={{ gap: 4 }}>
+            <Field label="Planner">
+              <select className="select" value={s.planner_mode} onChange={(e) => save({ planner_mode: e.target.value })}>
+                <option value="auto">Offline rules first, then the AI provider (recommended)</option>
+                <option value="rules">Offline rules only (no AI calls)</option>
+                <option value="llm">Always use the AI provider</option>
+              </select>
+            </Field>
+            <Switch checked={!!s.require_approval_for_writes} onChange={(v) => save({ require_approval_for_writes: v })} label="Also ask before each staged write (the commit review always happens)" />
+            <Switch checked={!!s.allow_app_launch} onChange={(v) => save({ allow_app_launch: v })} label="Allow opening allowlisted apps" />
+            <Switch checked={!!s.rag_auto_index} onChange={(v) => save({ rag_auto_index: v })} label="Keep the knowledge base in sync after commits and undo" />
+          </div>
+        </Card>
+      </>}
+      {tab === "email" && <EmailCard />}
+      {tab === "ai" && <ProvidersCard />}
+      {tab === "knowledge" && <EmbedderCard current={s.rag_embedder ?? { kind: "local" }} kinds={kinds} onSave={(cfg) => save({ rag_embedder: cfg }, "Embedder saved. Re-index to use it.")} />}
+      {tab === "apps" && <AppsCard />}
+    </>
+  );
+}
 
-      <div className="card">
-        <h3>Workspace</h3>
-        <p className="muted small">The folder tasks can read and (after your review) change. Sensitive files such as .env and keys are always off-limits.</p>
-        <div className="row">
-          <input className="grow mono" value={ws} onChange={(e) => setWs(e.target.value)} />
-          {isDesktop() && <button onClick={pickFolder}>Browse…</button>}
-          <button className="primary" disabled={ws === s.workspace_root}
-                  onClick={() => save({ workspace_root: ws }, "Workspace changed. Re-index it in Knowledge.")}>Use folder</button>
+function EmailCard() {
+  const toast = useToast();
+  const [st, setSt] = useState<any>(null);
+  const [cfg, setCfg] = useState<any>({ mode: "local" });
+  const [pw, setPw] = useState("");
+  const load = useCallback(async () => {
+    const [status, settings] = await Promise.all([get("/api/mail/status"), get("/api/settings")]);
+    setSt(status);
+    setCfg({ mode: "local", ...(settings.settings.mail ?? {}) });
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const run = async (fn: () => Promise<any>, ok: string) => {
+    try { await fn(); toast({ title: ok }); await load(); } catch (e: any) { toast({ title: "That didn't work", text: e.message, bad: true }); }
+  };
+  const f = (k: string) => ({ value: cfg[k] ?? "", onChange: (e: any) => setCfg({ ...cfg, [k]: e.target.value }) });
+  return (
+    <Card>
+      <CardHead title="Email account" sub="Reading and drafting are free; every send asks you first."
+                right={st && <Chip tone={st.mode === "imap" ? (st.password_stored ? "pass" : "review") : st.mode === "off" ? "nc" : "info"}>
+                  {st.mode === "imap" ? (st.password_stored ? "Connected" : "Password missing") : st.mode === "off" ? "Off" : "Demo mailbox"}</Chip>} />
+      <Seg label="Email mode" value={cfg.mode} onChange={(m) => setCfg({ ...cfg, mode: m })} items={[{ id: "local", label: "Demo mailbox" }, { id: "imap", label: "My account (IMAP / SMTP)" }, { id: "off", label: "Off" }]} />
+      <div className="form-grid" style={{ marginTop: 16 }}>
+        <Field label="Your address"><input className="input" {...f("address")} placeholder="you@example.com" /></Field>
+        <Field label="Display name"><input className="input" {...f("display_name")} /></Field>
+        {cfg.mode === "imap" && <>
+          <Field label="IMAP server" hint="Port 993 (TLS)."><input className="input" {...f("imap_host")} placeholder="imap.gmail.com" /></Field>
+          <Field label="SMTP server" hint="Port 587 (STARTTLS) or 465."><input className="input" {...f("smtp_host")} placeholder="smtp.gmail.com" /></Field>
+          <Field label="User name"><input className="input" {...f("username")} /></Field>
+          <Field label="Sent folder"><input className="input" {...f("sent_folder")} placeholder="Sent" /></Field>
+        </>}
+      </div>
+      {cfg.mode === "imap" && (
+        <div className="row nowrap" style={{ marginTop: 14 }}>
+          <input className="input" type="password" aria-label="Email password" value={pw} onChange={(e) => setPw(e.target.value)}
+                 placeholder={st?.password_stored ? "Password stored. Type to replace" : "Password or app password"} />
+          <button className="ee-btn outline" disabled={!pw} onClick={() => run(async () => { await post("/api/mail/password", { password: pw }); setPw(""); }, "Password stored securely")}><KeyRound {...ICON_SM} /> Store</button>
+          {st?.password_stored && <button className="ee-btn ghost" onClick={() => run(() => del("/api/mail/password"), "Password removed")}>Remove</button>}
         </div>
+      )}
+      {cfg.mode === "imap" && <p className="muted">For Gmail and Outlook, create an app password in your account's security settings.</p>}
+      <div className="row" style={{ marginTop: 14 }}>
+        <button className="ee-btn primary" onClick={() => run(() => put("/api/mail/config", cfg), "Email settings saved")}>Save</button>
+        <button className="ee-btn outline" onClick={() => run(() => post("/api/mail/test"), "Connection works")}><Plug {...ICON_SM} /> Test connection</button>
       </div>
-
-      <div className="card">
-        <h3>Behaviour</h3>
-        <label className="field">
-          <span>Planner</span>
-          <select value={s.planner_mode} onChange={(e) => save({ planner_mode: e.target.value })}>
-            <option value="auto">Rules first, then AI provider (recommended)</option>
-            <option value="rules">Rules only (offline, no AI calls)</option>
-            <option value="llm">Always use the AI provider</option>
-          </select>
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={!!s.require_approval_for_writes}
-                 onChange={(e) => save({ require_approval_for_writes: e.target.checked })} />
-          Also ask before each staged write (the commit review always happens)
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={!!s.allow_app_launch} onChange={(e) => save({ allow_app_launch: e.target.checked })} />
-          Allow launching allowlisted apps
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={!!s.rag_auto_index} onChange={(e) => save({ rag_auto_index: e.target.checked })} />
-          Keep the knowledge base in sync (re-index on startup, commit and undo)
-        </label>
-      </div>
-
-      <EmbedderCard current={emb} kinds={kinds} onSave={(cfg) => save({ rag_embedder: cfg }, "Embedder saved. Re-index to embed existing documents.")} />
-      <ProvidersCard onChange={onChange} />
-      <AppsCard />
-    </div>
+      {cfg.mode === "local" && <div style={{ marginTop: 14 }}><Banner tone="info" icon={<Mail {...ICON_SM} />}>The demo mailbox lives in your data folder. Sending saves to its Sent folder; nothing is delivered.</Banner></div>}
+    </Card>
   );
 }
 
@@ -91,158 +131,117 @@ function EmbedderCard({ current, kinds, onSave }: { current: any; kinds: Record<
   useEffect(() => { void get("/api/providers").then((r) => setProviders(r.providers)); }, []);
   const def = kinds[cfg.kind] ?? {};
   return (
-    <div className="card">
-      <h3>Embeddings (knowledge base)</h3>
-      <p className="muted small">
-        <b>Local</b> works offline with no downloads. <b>Ollama</b> runs a real embedding model on this machine.
-        <b> OpenAI</b>/<b>Gemini</b> use the key of a provider you set up below.
-      </p>
-      <div className="grid2">
-        <label className="field"><span>Type</span>
-          <select value={cfg.kind} onChange={(e) => setCfg({ kind: e.target.value })}>
-            <option value="local">Local (hashing, offline)</option>
-            <option value="ollama">Ollama (local model)</option>
-            <option value="openai">OpenAI / compatible</option>
-            <option value="gemini">Google Gemini</option>
+    <Card>
+      <CardHead title="Embeddings" sub="Local works offline with no downloads. Ollama runs a real model on this computer. OpenAI and Gemini use a provider's key." />
+      <div className="form-grid">
+        <Field label="Type">
+          <select className="select" value={cfg.kind} onChange={(e) => setCfg({ kind: e.target.value })}>
+            <option value="local">Local (offline)</option><option value="ollama">Ollama (local model)</option>
+            <option value="openai">OpenAI or compatible</option><option value="gemini">Google Gemini</option>
           </select>
-        </label>
-        {cfg.kind !== "local" && (
-          <label className="field"><span>Model</span>
-            <input value={cfg.model ?? ""} placeholder={def.model} onChange={(e) => setCfg({ ...cfg, model: e.target.value })} />
-          </label>
-        )}
-        {(cfg.kind === "ollama" || cfg.kind === "openai") && (
-          <label className="field"><span>Base URL</span>
-            <input value={cfg.base_url ?? ""} placeholder={def.base_url} onChange={(e) => setCfg({ ...cfg, base_url: e.target.value })} />
-          </label>
-        )}
+        </Field>
+        {cfg.kind !== "local" && <Field label="Model"><input className="input" value={cfg.model ?? ""} placeholder={def.model} onChange={(e) => setCfg({ ...cfg, model: e.target.value })} /></Field>}
+        {(cfg.kind === "ollama" || cfg.kind === "openai") && <Field label="Base URL"><input className="input" value={cfg.base_url ?? ""} placeholder={def.base_url} onChange={(e) => setCfg({ ...cfg, base_url: e.target.value })} /></Field>}
         {(cfg.kind === "openai" || cfg.kind === "gemini") && (
-          <label className="field"><span>Use key from provider</span>
-            <select value={cfg.provider_id ?? ""} onChange={(e) => setCfg({ ...cfg, provider_id: e.target.value || undefined })}>
-              <option value="">Choose…</option>
+          <Field label="Use the key from">
+            <select className="select" value={cfg.provider_id ?? ""} onChange={(e) => setCfg({ ...cfg, provider_id: e.target.value || undefined })}>
+              <option value="">Choose a provider</option>
               {providers.map((p) => <option key={p.id} value={p.id}>{p.display_name} ({p.id})</option>)}
             </select>
-          </label>
+          </Field>
         )}
       </div>
-      <button className="primary" onClick={() => onSave(cfg)}>Save embedder</button>
-    </div>
+      <div className="row" style={{ marginTop: 14 }}><button className="ee-btn primary" onClick={() => onSave(cfg)}>Save embedder</button></div>
+    </Card>
   );
 }
 
-function ProvidersCard({ onChange }: { onChange: () => void }) {
+function ProvidersCard() {
+  const { refresh } = useLive();
+  const toast = useToast();
   const [list, setList] = useState<Provider[]>([]);
   const [kinds, setKinds] = useState<Record<string, any>>({});
   const [form, setForm] = useState<any>({ id: "", kind: "openai", model: "", base_url: "", api_key: "" });
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-
-  const load = useCallback(async () => {
-    const r = await get("/api/providers");
-    setList(r.providers);
-    setKinds(r.kinds);
-  }, []);
+  const load = useCallback(async () => { const r = await get("/api/providers"); setList(r.providers); setKinds(r.kinds); }, []);
   useEffect(() => { void load(); }, [load]);
-
-  const run = async (fn: () => Promise<unknown>, ok: string) => {
-    setMsg(null);
+  const run = async (fn: () => Promise<any>, ok: string) => {
     try {
       const r: any = await fn();
-      setMsg({ ok: r?.ok !== false, text: r?.ok === false ? r?.message ?? "Test failed" : ok });
-      await load();
-      onChange();
-    } catch (e: any) {
-      setMsg({ ok: false, text: e.message });
-    }
+      if (r?.ok === false) toast({ title: "Test failed", text: r?.message, bad: true }); else toast({ title: ok });
+      await load(); refresh();
+    } catch (e: any) { toast({ title: "That didn't work", text: e.message, bad: true }); }
   };
-
   const add = () => run(async () => {
     const id = form.id.trim() || form.kind.replace("_", "-");
     await put(`/api/providers/${id}`, { kind: form.kind, model: form.model || undefined, base_url: form.base_url || undefined });
     if (form.api_key.trim()) await post(`/api/providers/${id}/credential`, { api_key: form.api_key.trim() });
     if (!list.some((p) => p.is_default)) await post(`/api/providers/${id}/default`);
     setForm({ ...form, id: "", api_key: "" });
-  }, "Provider saved. Use Test to check it.");
-
+  }, "Provider saved");
   const k = kinds[form.kind] ?? {};
   return (
-    <div className="card">
-      <h3>AI providers</h3>
-      <p className="muted small">Used for free-form planning and written answers. Keys are stored in your OS credential store, never in the database.</p>
-      {msg && <div className={`notice ${msg.ok ? "" : "notice-bad"}`}>{msg.text}</div>}
-      <ul className="prov-list">
-        {list.map((p) => (
-          <li key={p.id} className="row wrap">
-            <b>{p.display_name}</b>
-            <span className="mono small">{p.model}</span>
-            {p.is_default && <span className="tag">default</span>}
-            <span className={`tag ${p.credential.stored || !p.credential.required ? "" : "tag-bad"}`}>
-              {p.credential.required ? (p.credential.stored ? "key stored" : "no key") : "no key needed"}
-            </span>
-            <span className="push" />
-            <button onClick={() => run(() => post(`/api/providers/${p.id}/test`), "Connection works")}>Test</button>
-            {!p.is_default && <button onClick={() => run(() => post(`/api/providers/${p.id}/default`), "Default set")}>Make default</button>}
-            <button className="danger-ghost" onClick={() => run(() => del(`/api/providers/${p.id}`), "Removed")}>Remove</button>
-          </li>
-        ))}
-      </ul>
-      <div className="grid2">
-        <label className="field"><span>Type</span>
-          <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value, model: "" })}>
-            {Object.entries(kinds).map(([id, m]: any) => <option key={id} value={id}>{m.label}</option>)}
-          </select>
-        </label>
-        <label className="field"><span>Model</span>
-          <input value={form.model} placeholder={k.default_model || "model id"} onChange={(e) => setForm({ ...form, model: e.target.value })} />
-        </label>
-        {k.requires_base_url && (
-          <label className="field"><span>Base URL</span>
-            <input value={form.base_url} placeholder="https://host/v1" onChange={(e) => setForm({ ...form, base_url: e.target.value })} />
-          </label>
+    <>
+      <Card>
+        <CardHead title="AI providers" sub="Used for free-form requests and written answers. Without one, the offline planner handles common requests." />
+        {list.length === 0 ? <p className="muted">None yet.</p> : (
+          <ul className="plain-list">
+            {list.map((p) => (
+              <li key={p.id} className="plain-row">
+                <span className="m"><b>{p.display_name}</b><small className="mono">{p.model}</small></span>
+                {p.is_default && <span className="tag">Default</span>}
+                <Chip tone={p.credential.stored || !p.credential.required ? "pass" : "review"}>{p.credential.required ? (p.credential.stored ? "Key stored" : "No key") : "No key needed"}</Chip>
+                <button className="ee-btn outline sm" onClick={() => run(() => post(`/api/providers/${p.id}/test`), "Connection works")}>Test</button>
+                {!p.is_default && <button className="ee-btn ghost sm" onClick={() => run(() => post(`/api/providers/${p.id}/default`), "Default set")}>Make default</button>}
+                <button className="ee-btn ghost round sm" aria-label={`Remove ${p.display_name}`} onClick={() => run(() => del(`/api/providers/${p.id}`), "Removed")}><Trash2 {...ICON_SM} /></button>
+              </li>
+            ))}
+          </ul>
         )}
-        <label className="field"><span>API key</span>
-          <input type="password" value={form.api_key} placeholder={k.key_hint} onChange={(e) => setForm({ ...form, api_key: e.target.value })} />
-        </label>
-        <label className="field"><span>Id (optional)</span>
-          <input value={form.id} placeholder={form.kind.replace("_", "-")} onChange={(e) => setForm({ ...form, id: e.target.value })} />
-        </label>
-      </div>
-      <button className="primary" onClick={add}>Add provider</button>
-    </div>
+      </Card>
+      <Card>
+        <CardHead title="Add a provider" sub="Keys are stored in the system credential store, never in the database." />
+        <div className="form-grid">
+          <Field label="Type"><select className="select" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value, model: "" })}>
+            {Object.entries(kinds).map(([id, m]: any) => <option key={id} value={id}>{m.label}</option>)}</select></Field>
+          <Field label="Model"><input className="input" value={form.model} placeholder={k.default_model || "model id"} onChange={(e) => setForm({ ...form, model: e.target.value })} /></Field>
+          {k.requires_base_url && <Field label="Base URL"><input className="input" value={form.base_url} placeholder="https://host/v1" onChange={(e) => setForm({ ...form, base_url: e.target.value })} /></Field>}
+          <Field label="API key"><input className="input" type="password" value={form.api_key} placeholder={k.key_hint} onChange={(e) => setForm({ ...form, api_key: e.target.value })} /></Field>
+          <Field label="Id (optional)"><input className="input" value={form.id} placeholder={form.kind.replace("_", "-")} onChange={(e) => setForm({ ...form, id: e.target.value })} /></Field>
+        </div>
+        <div className="row" style={{ marginTop: 14 }}><button className="ee-btn primary" onClick={add}>Add provider</button></div>
+      </Card>
+    </>
   );
 }
 
 function AppsCard() {
+  const toast = useToast();
   const [apps, setApps] = useState<any[]>([]);
   const [f, setF] = useState({ id: "", name: "", path: "", args_policy: "workspace_file" });
-  const [err, setErr] = useState<string | null>(null);
   const load = useCallback(async () => setApps((await get("/api/apps")).apps), []);
   useEffect(() => { void load(); }, [load]);
   return (
-    <div className="card">
-      <h3>Allowlisted apps</h3>
-      <p className="muted small">The only programs a task may open. Each launch needs your approval (once, or for a while).</p>
-      <ul className="prov-list">
+    <Card>
+      <CardHead title="Allowlisted apps" sub="The only programs a task may open. Each launch asks you first, once or for a while." />
+      <ul className="plain-list">
         {apps.map((a) => (
-          <li key={a.id} className="row">
-            <b>{a.name}</b><span className="mono small grow ellipsis">{a.path}</span>
-            <button className="danger-ghost" onClick={async () => { await del(`/api/apps/${a.id}`); void load(); }}>Remove</button>
+          <li key={a.id} className="plain-row">
+            <span className="m"><b>{a.name}</b><small className="mono ellipsis">{a.path}</small></span>
+            <button className="ee-btn ghost round sm" aria-label={`Remove ${a.name}`} onClick={async () => { await del(`/api/apps/${a.id}`); void load(); }}><Trash2 {...ICON_SM} /></button>
           </li>
         ))}
       </ul>
-      <div className="grid2">
-        <input placeholder="id (e.g. notepad)" value={f.id} onChange={(e) => setF({ ...f, id: e.target.value })} />
-        <input placeholder="Name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
-        <input className="mono" placeholder="C:\\Windows\\System32\\notepad.exe" value={f.path} onChange={(e) => setF({ ...f, path: e.target.value })} />
-        <select value={f.args_policy} onChange={(e) => setF({ ...f, args_policy: e.target.value })}>
-          <option value="workspace_file">Can open a workspace file</option>
-          <option value="none">No arguments</option>
-        </select>
+      <div className="form-grid" style={{ marginTop: 14 }}>
+        <Field label="Id"><input className="input" placeholder="notepad" value={f.id} onChange={(e) => setF({ ...f, id: e.target.value })} /></Field>
+        <Field label="Name"><input className="input" placeholder="Notepad" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+        <Field label="Program"><input className="input mono" placeholder="C:\Windows\System32\notepad.exe" value={f.path} onChange={(e) => setF({ ...f, path: e.target.value })} /></Field>
+        <Field label="Arguments"><select className="select" value={f.args_policy} onChange={(e) => setF({ ...f, args_policy: e.target.value })}>
+          <option value="workspace_file">May open a workspace file</option><option value="none">No arguments</option></select></Field>
       </div>
-      {err && <p className="error">{err}</p>}
-      <button disabled={!f.id || !f.name || !f.path} onClick={async () => {
-        try { await put(`/api/apps/${f.id}`, { name: f.name, path: f.path, args_policy: f.args_policy }); setF({ id: "", name: "", path: "", args_policy: "workspace_file" }); setErr(null); void load(); }
-        catch (e: any) { setErr(e.message); }
-      }}>Add app</button>
-    </div>
+      <div className="row" style={{ marginTop: 14 }}><button className="ee-btn primary" disabled={!f.id || !f.name || !f.path} onClick={async () => {
+        try { await put(`/api/apps/${f.id}`, { name: f.name, path: f.path, args_policy: f.args_policy }); setF({ id: "", name: "", path: "", args_policy: "workspace_file" }); void load(); toast({ title: "App added" }); }
+        catch (e: any) { toast({ title: "Not added", text: e.message, bad: true }); }
+      }}>Add app</button></div>
+    </Card>
   );
 }

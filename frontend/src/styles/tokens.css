@@ -1,0 +1,232 @@
+/* Eagle Eye UI — generated from tokens.json */
+:root, [data-theme="light"] {
+  --bg: #f0f0f0; /* Page canvas behind everything (desktop). Cards sit on it; no borders needed. */
+  --card: #ffffff; /* Card, rail pill, search field, white pill controls on the canvas. */
+  --soft: #f5f5f5; /* Controls and inner groups INSIDE a white card (a pill on white goes soft grey). */
+  --muted: #f3f3f3; /* Hover fill on soft controls, skeleton base, secondary surfaces. */
+  --track: #ededed; /* Progress bar and meter tracks. */
+  --row-hover: #f7f7f7; /* Table / list row hover. */
+  --line: #ececec; /* Hairline dividers and table rules. Used sparingly: the look is borderless. */
+  --ink: #111111; /* Primary text, headings, KPI numbers. */
+  --ink-2: #4d4d4d; /* Secondary text, inactive nav labels, body copy in dense lists. */
+  --ink-3: #757575; /* Muted text: captions, hints, counts. On bg (#F0F0F0) this is about 4.0:1: keep it to 12px+ hints, never body text. */
+  --primary: #111111; /* Primary buttons, the active rail icon, the active segmented pill, the FAB-style round actions. Near-black, not a brand blue. */
+  --primary-fg: #ffffff; /* Text and icons on primary. */
+  --ring: #0066b3; /* Focus ring (2px, offset 2px) on every interactive element. */
+  --brand-blue: #004b8d; /* Brand blue. Links in long text, the Setup workspace dot, info chips. Never a large fill on desktop. */
+  --brand-blue-50: #eaf2fa; /* Info chip / info box tint. */
+  --accent-orange: #f5a623; /* Accent for tiny highlights only (camera outline corners, logo pupil). */
+  --pass: #1f7a4d; /* PASS text on pass-bg. Always with the word PASS. */
+  --pass-bg: #e6f4ec; /* PASS chip fill. */
+  --pass-dot: #1f7a4d; /* PASS dot, done step tick, progress fill. */
+  --fail: #c62828; /* FAIL text and destructive actions. Always with the word. */
+  --fail-bg: #fdecec; /* FAIL chip fill, destructive button tint. */
+  --fail-dot: #c62828; /* FAIL dot, notification dot on the rail. */
+  --review: #a35f00; /* REVIEW (a person decides) text. */
+  --review-bg: #fff4e0; /* REVIEW chip fill, warning banner. */
+  --review-dot: #e69500; /* REVIEW dot and chart segment. */
+  --retake: #01689f; /* NOT PHOTOGRAPHED / retake text. */
+  --retake-bg: #e3f2fb; /* NOT PHOTOGRAPHED chip fill. */
+  --nc: #5f6a78; /* NOT CHECKED text (input missing). Never counted as pass or fail. */
+  --nc-bg: #eef0f3; /* NOT CHECKED chip fill. */
+  --phys: #5e4bb0; /* PHYSICAL (checked by hand) text. */
+  --phys-bg: #efecfa; /* PHYSICAL chip fill. */
+  --lc-setup: #8a94a6; /* Lifecycle: setup (status dot / grid square). */
+  --lc-ready: #0066b3; /* Lifecycle: ready for inspection. */
+  --lc-insp: #00897b; /* Lifecycle: under inspection. */
+  --lc-review: #e69500; /* Lifecycle: awaiting review. */
+  --lc-punch: #c62828; /* Lifecycle: punch open. */
+  --lc-reinsp: #ef6c00; /* Lifecycle: re-inspection. */
+  --lc-released: #1f7a4d; /* Lifecycle: QC released. */
+  --ws-overview: #111111; /* Workspace dot: Overview. */
+  --ws-setup: #004b8d; /* Workspace dot: Setup. */
+  --ws-review: #00796b; /* Workspace dot: Review. */
+  --ws-closeout: #2e7d32; /* Workspace dot: Close-out. */
+  --ws-system: #8a8a8a; /* Workspace dot: System. */
+  --note-bg: #fff6e3; /* Note / warning box fill. */
+  --note-text: #7a5300; /* Note / warning box text. */
+  --glass-bg: rgba(240,240,240,0.85); /* Sticky top bar and tablet header/footer, with backdrop blur 12-22px. */
+  --tab-bg: #efeff1; /* Tablet / phone canvas (light only). */
+  --tab-ink: #111113; /* Tablet / phone primary text and primary button fill. */
+  --shadow-none: none; /* Default card shadow on light desktop: cards separate by colour (white on grey), not shadow. */
+  --shadow-hover: 0 2px 4px rgba(16,24,40,0.05), 0 12px 28px rgba(16,24,40,0.08); /* Clickable cards on hover (project card, step card). */
+  --shadow-pop: 0 8px 16px rgba(16,24,40,0.06), 0 24px 56px rgba(16,24,40,0.14); /* Dialogs, menus, popovers. */
+  --shadow-tab-card: 0 1px 2px rgba(17,17,19,0.04), 0 8px 24px rgba(17,17,19,0.06); /* Tablet cards and pills: the phone UI does use a soft shadow. */
+}
+[data-theme="dark"] {
+  --bg: #0b0b0c;
+  --card: #161618;
+  --soft: rgba(255,255,255,0.05);
+  --muted: #1f1f22;
+  --track: rgba(255,255,255,0.12);
+  --row-hover: rgba(255,255,255,0.04);
+  --line: rgba(255,255,255,0.08);
+  --ink: #f2f2f2;
+  --ink-2: #a1a1a6;
+  --ink-3: #8e8e93;
+  --primary: #f2f2f2;
+  --primary-fg: #0b0b0c;
+  --ring: #6fa6dc;
+  --brand-blue: #4d8fd1;
+  --brand-blue-50: rgba(77,143,209,0.16);
+  --accent-orange: #f5a623;
+  --pass: #4ade80;
+  --pass-bg: rgba(74,222,128,0.14);
+  --pass-dot: #4ade80;
+  --fail: #fb7185;
+  --fail-bg: rgba(251,113,133,0.16);
+  --fail-dot: #fb7185;
+  --review: #fbbf24;
+  --review-bg: rgba(251,191,36,0.14);
+  --review-dot: #fbbf24;
+  --retake: #5bb8f0;
+  --retake-bg: rgba(91,184,240,0.14);
+  --nc: #a1a1a6;
+  --nc-bg: rgba(161,161,166,0.14);
+  --phys: #b7a6f5;
+  --phys-bg: rgba(183,166,245,0.16);
+  --lc-setup: #a1a1a6;
+  --lc-ready: #5eb0f5;
+  --lc-insp: #3dcdb9;
+  --lc-review: #fbbf24;
+  --lc-punch: #fb7185;
+  --lc-reinsp: #fb923c;
+  --lc-released: #4ade80;
+  --ws-overview: #b79cf5;
+  --ws-setup: #5eb0f5;
+  --ws-review: #3dcdb9;
+  --ws-closeout: #74d67b;
+  --ws-system: #a7bcc6;
+  --note-bg: rgba(251,191,36,0.12);
+  --note-text: #fcd34d;
+  --glass-bg: rgba(11,11,12,0.85);
+  --tab-bg: #efeff1;
+  --tab-ink: #111113;
+  --shadow-hover: 0 2px 4px rgba(0,0,0,0.35), 0 12px 28px rgba(0,0,0,0.40);
+  --shadow-pop: 0 8px 16px rgba(0,0,0,0.35), 0 24px 56px rgba(0,0,0,0.55);
+}
+:root {
+  --space-1: 4px; /* Icon to text inside chips. */
+  --space-2: 8px; /* Gap between pills and small buttons. */
+  --space-3: 12px; /* Gap inside cards between rows; tablet card gap. */
+  --space-4: 16px; /* Grid gap between cards (space-grid). */
+  --space-5: 20px; /* Gap between page sections (space-section); card padding on small cards. */
+  --space-card: 24px; /* Card padding (desktop cards use 20-26px). */
+  --space-content-x: 32px; /* Horizontal page padding of the content column and top bar. */
+  --rail-width: 84px; /* Desktop icon rail column (60px pill inside). */
+  --topbar-height: 76px; /* Sticky top bar height. */
+  --touch-min: 44px; /* Minimum hit size on desktop (rail icons, pills, search). Tablet: 48-52px. */
+  --radius-sm: 8px; /* Thumbnails, tiny inner boxes. */
+  --radius-md: 14px; /* Stat tiles, inner rows, inputs in dialogs. */
+  --radius-lg: 20px; /* Grouped list containers, step cards (20-22px), tablet cards (22px). */
+  --radius-card: 26px; /* Every top-level card and grid tile on desktop. */
+  --radius-pill: 9999px; /* Buttons, chips, segmented tracks, rail, search, avatars: every control is a pill. */
+  --font-sans: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --font-mono: Consolas, ui-monospace, monospace;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --text-page-title: 400 36px/1.1 var(--font-sans); /* One per page, top-left, in the page header. */
+  --text-kpi-number: 300 44px/1 var(--font-sans); /* Big numbers in KPI cards; tabular numerals. */
+  --text-stat-number: 300 18px/1.2 var(--font-sans); /* Small stat tiles inside cards. */
+  --text-section-title: 600 17px/1.3 var(--font-sans); /* Card / section heading. */
+  --text-card-title: 600 16px/1.3 var(--font-sans); /* Title inside a grid card. */
+  --text-body: 400 14px/1.5 var(--font-sans); /* Default text. */
+  --text-label: 500 13px/1.4 var(--font-sans); /* Buttons (13.5px), nav, pills, tab labels. */
+  --text-caption: 400 12px/1.45 var(--font-sans); /* Hints, meta lines, chips (12px medium). */
+  --text-micro: 500 11px/1.4 var(--font-sans); /* Counts in pills, bar captions. Never smaller. */
+  --text-tab-title: 600 20px/1.2 var(--font-sans); /* Tablet header title / greeting. */
+  --text-tab-sub: italic 400 14px/1.2 var(--font-serif); /* Tablet header subtitle, serif italic for warmth. */
+  --text-tab-body: 400 15px/1.45 var(--font-sans); /* Tablet body text (glove distance). */
+  --text-tab-button: 600 15px/1.2 var(--font-sans); /* Tablet buttons, min 52px high. */
+}
+.page-title {
+  font-family: var(--font-sans);
+  font-size: 36px;
+  line-height: 1.1;
+  font-weight: 400;
+  letter-spacing: -0.035em;
+}
+.kpi-number {
+  font-family: var(--font-sans);
+  font-size: 44px;
+  line-height: 1;
+  font-weight: 300;
+  letter-spacing: -0.04em;
+}
+.stat-number {
+  font-family: var(--font-sans);
+  font-size: 18px;
+  line-height: 1.2;
+  font-weight: 300;
+  letter-spacing: 0;
+}
+.section-title {
+  font-family: var(--font-sans);
+  font-size: 17px;
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.card-title {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+}
+.label {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.caption {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.45;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.micro {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.tab-title {
+  font-family: var(--font-sans);
+  font-size: 20px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.tab-sub {
+  font-family: var(--font-serif);
+  font-size: 14px;
+  line-height: 1.2;
+  font-weight: 400;
+  letter-spacing: 0;
+  font-style: italic;
+}
+.tab-body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.45;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.tab-button {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 0;
+}

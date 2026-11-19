@@ -86,7 +86,7 @@ def make_env(tmp_path) -> Env:
 def build_kernel(env: Env, plan=None, *, plan_fn: Optional[Callable] = None, sim: bool = True, seed: int = 0,
                  effect_at_issue: float = 0.0, settings: Optional[dict] = None, journal_fault=None,
                  fork_enabled: bool = True, planner=None, budget=None, clock: Optional[SimClock] = None,
-                 os_adapter=None):
+                 os_adapter=None, home_root=None, services=None, automation_factory=None):
     db = Database(env.db_path)
     db.migrate()
     registry = build_default_registry()
@@ -104,7 +104,8 @@ def build_kernel(env: Env, plan=None, *, plan_fn: Optional[Callable] = None, sim
         db=db, registry=registry, policy=policy,
         planner=planner or StaticPlanner(plan=plan, fn=plan_fn), io=io,
         workspace_root=env.workspace, data_dir=env.data_dir, settings_fn=lambda: dict(settings or {}),
-        journal_fault=journal_fault, fork_enabled=fork_enabled, budget=budget, os_adapter=os_adapter or FakeOS(), **kwargs,
+        journal_fault=journal_fault, fork_enabled=fork_enabled, budget=budget, os_adapter=os_adapter or FakeOS(), home_root=home_root, services=services,
+        automation=automation_factory(db, clock or __import__('time').time) if automation_factory else None, **kwargs,
     )
     kernel.boot()
     return kernel

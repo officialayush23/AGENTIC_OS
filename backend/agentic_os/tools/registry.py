@@ -22,11 +22,10 @@ UNSUPPORTED_TOOL_HINTS = {
     "remove_file": "Deleting files is not supported in v0.1.",
     "move_file": "Moving or renaming files is not supported in v0.1.",
     "rename_file": "Moving or renaming files is not supported in v0.1.",
-    "send_email": "Email is a planned integration, not available in v0.1.",
-    "http_request": "Network requests are not available in v0.1.",
-    "web_search": "Web search is a planned integration, not available in v0.1.",
-    "browse": "Browser automation is planned, not available in v0.1.",
-    "open_url": "Browser automation is planned, not available in v0.1.",
+    "web_search": "There is no search engine tool; open a search page with browser_open instead.",
+    "send_email": "Use email_send (it asks you before sending).",
+    "browse": "Use browser_open.",
+    "open_url": "Use browser_open, or web_fetch for a plain download.",
     "download_file": "Downloads are not available in v0.1.",
     "install_package": "Installing software is not allowed.",
     "elevate": "Administrator elevation is never allowed.",
@@ -139,10 +138,12 @@ class ToolRegistry:
 def build_default_registry() -> ToolRegistry:
     from .apps import APP_TOOLS
     from .knowledge import KNOWLEDGE_TOOLS
+    from .personal import PERSONAL_TOOLS
+    from .web import WEB_TOOLS
     from .system import SYSTEM_TOOLS
     from .workspace import WORKSPACE_TOOLS
 
     registry = ToolRegistry()
-    for spec in [*WORKSPACE_TOOLS, *APP_TOOLS, *SYSTEM_TOOLS, *KNOWLEDGE_TOOLS]:
+    for spec in [*WORKSPACE_TOOLS, *APP_TOOLS, *SYSTEM_TOOLS, *KNOWLEDGE_TOOLS, *PERSONAL_TOOLS, *WEB_TOOLS]:
         registry.register(spec)
     return registry

@@ -144,9 +144,54 @@ and backend cleanup on both a window close and a hard kill of the app.
 - Verified on Linux: auto-pair, one-time reuse refused, port fallback. The `.bat` itself has not been run
   on Windows yet.
 
+### Session 4 — 2026-11-19: truly agentic, and the Eagle Eye UI
+
+**Kernel**
+- Home mount (`kernel/mounts.py`): `~/` paths go to `<data_dir>/home`; one transaction spans the workspace
+  and Home; the journal stores a roots map so recovery and undo work across both. Crash tests at every
+  commit stage.
+- Capability kinds `mail` (read at spawn; send = one-shot grant) and `web` (domain-scoped read grant;
+  act = one-shot grant). `GRANTABLE_TOOL_CAPS`, `cap_resource()`.
+- Timer interrupts: due schedules spawn processes from the kernel loop. `auto_commit` commits staged files
+  without review (still undoable; irreversible steps still ask). `origin` on every process.
+- `on_exit` hook (closes the task's browser context). Explicit plans on spawn (still validated + policed).
+- Migration 4: `schedules`, `listeners`, `trigger_runs`.
+
+**Services and tools**
+- Email: local demo mailbox + IMAP/SMTP (TLS, password in keyring); list/read/search/draft/send; idempotent
+  send via deterministic Message-ID + reconcile.
+- Calendar: iCalendar read/write, overlaps, Jitsi links, invitation files; meeting = calendar change
+  (reviewed) → commit → email with the invite (approved).
+- Notes: `create_note`, `append_note`; direct editing in the UI with optimistic concurrency.
+- Browser: `web_fetch` (SSRF guard), Playwright on a dedicated thread with Edge/Chrome, snapshots with
+  element refs, click/type with approvals bound to the element.
+- Listeners: file (polling snapshot), email (seen UIDs), webhook (`/hooks/<id>`, hashed secret); cooldown
+  batching; self-trigger suppression; prompt-injection fencing of event content.
+- Offline rules for email, calendar, meetings, notes and web requests.
+
+**UI**: rebuilt on the Eagle Eye design system (tokens and component CSS from the zip; Lucide icons).
+Rail + frosted top bar with search, theme, notifications and a status meter. Home (greeting, composer,
+KPI row, My work with segmented buckets and grouped list, agenda, unread mail, how-it-works steps), Tasks
+(resizable split panes, plain-language summary, decision block with email / web / diff previews), Inbox,
+Calendar (week grid, add event, schedule meeting), Notes (editor), Automations (schedules, listeners,
+history, webhook secret dialog), Browser, Knowledge, Settings (General, Email, AI, Knowledge, Apps). Light
+and dark.
+
+**Verified**: 214 backend tests (15 new kernel tests incl. a real Chrome click flow, 8 new API tests);
+frontend typecheck, tests and build; the whole app in headless Chrome: seeded tasks, a meeting scheduled
+from the dialog → review → commit → email approval → invitation in Sent with the .ics attached; a calendar
+edit made by the user while a task had staged one was reported as a conflict instead of being overwritten.
+
+**Not done / to check on Windows**
+- Not run on Windows yet (Edge channel, keyring for the mail password, `start.bat` with Playwright).
+- A real IMAP/SMTP account has not been tested; only the local mailbox.
+- If Edge and Chrome are both missing, run `python -m playwright install chromium` once.
+
 ## How to continue
 
 1. `start.bat` (installs, tests, opens the app). Record the Windows results in `docs/TESTING.md`.
 2. `run.bat` (browser) to try it; then install Rust and run `dev-desktop.bat` for the desktop app.
 3. Add a provider key in Settings and smoke-test free-form planning and Knowledge → Ask.
 4. `build.bat` for the installer (needs about 5 GB free for the Rust build cache).
+5. Settings → Email: connect a real account (an app password for Gmail/Outlook) and test sending to yourself.
+6. Automations: create a schedule ("Check my email", weekdays 9:00) and a file listener on `~/Notes`.

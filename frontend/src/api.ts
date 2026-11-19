@@ -118,3 +118,15 @@ export function subscribe(path: string, onEvent: (ev: any) => void, signal: Abor
   };
   void run();
 }
+
+/** Fetch an authenticated binary (e.g. a screenshot) and return an object URL for <img>. */
+export async function blobUrl(path: string): Promise<string> {
+  const res = await fetch(conn.base + path, { headers: headers(false), credentials: conn.token ? "omit" : "include" });
+  if (!res.ok) throw new ApiError(res.status, "HTTP_" + res.status, res.statusText);
+  return URL.createObjectURL(await res.blob());
+}
+
+/** URL of a backend resource for links the browser opens itself (downloads). Desktop mode needs blobUrl instead. */
+export function rawUrl(path: string): string {
+  return conn.base + path;
+}

@@ -197,6 +197,130 @@ def _clean_path(p: str) -> str:
     return p.replace("\\", "/").strip().strip("/").rstrip(".,;:") or "."
 
 
+_URL = r"((?:https?://)?(?:[\w-]+\.)+[a-z]{2,}(?::\d+)?(?:/[^\s\"']*)?|https?://(?:localhost|127\.0\.0\.1)(?::\d+)?(?:/[^\s\"']*)?)"
+_EMAIL = r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
+
+
+_FILE_EXT = re.compile(r"\.(md|txt|py|json|js|jsx|ts|tsx|csv|log|ya?ml|toml|ini|cfg|html?|css|ics|eml|rs|go|java|c|h|cpp|"
+                       r"sh|bat|ps1|xml|sql|lock|env|docx?|xlsx?|pdf|png|jpe?g)$", re.I)
+
+
+def _web(url: str) -> bool:
+    return url.lower().startswith(("http://", "https://")) or not _FILE_EXT.search(url.split("/")[0] if "/" in url else url)
+
+
+def parse_when(text: str, now: Optional["datetime"] = None) -> Optional[str]:
+    """'2026-11-20 11:00', 'tomorrow at 3pm', 'today 09:30', 'friday at 11' -> ISO local time."""
+    from datetime import datetime, timedelta
+    now = now or datetime.now()
+    low = text.lower()
+    m = re.search(r"(\d{4}-\d{2}-\d{2})[t ]+(\d{1,2}):(\d{2})", low)
+    if m:
+        return f"{m.group(1)}T{int(m.group(2)):02d}:{m.group(3)}"
+    day = None
+    if "tomorrow" in low:
+        day = now + timedelta(days=1)
+    elif "today" in low or "tonight" in low:
+        day = now
+    else:
+        names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        for i, n in enumerate(names):
+            if re.search(rf"\b{n}\b", low):
+                ahead = (i - now.weekday()) % 7 or 7
+                day = now + timedelta(days=ahead)
+                break
+    t = re.search(r"\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", low) or \
+        re.search(r"\b(\d{1,2})(?::(\d{2}))\s*(am|pm)?\b", low) or re.search(r"\b(\d{1,2})\s*(am|pm)\b()", low)
+    if day is None or t is None:
+        return None
+    groups = [g for g in t.groups()]
+    hour = int(groups[0])
+    minute = int(groups[1]) if groups[1] and groups[1].isdigit() else 0
+    ampm = next((g for g in groups[1:] if g in ("am", "pm")), None)
+    if ampm == "pm" and hour < 12:
+        hour += 12
+    if ampm == "am" and hour == 12:
+        hour = 0
+    if hour > 23 or minute > 59:
+        return None
+    return day.replace(hour=hour, minute=minute).strftime("%Y-%m-%dT%H:%M")
+
+
+def agentic_rules(r: str) -> Optional[dict]:
+    """Offline plans for email, calendar, notes and the web."""
+    low = r.lower()
+    plan = lambda goal, steps: {"goal": goal, "steps": steps, "needs_clarification": False}  # noqa: E731
+    m = re.search(r"(?:search|find|look)\s+(?:in\s+)?(?:my\s+)?(?:e-?mails?|mail|inbox)\s+(?:for\s+)?(.+)$", r, re.I)
+    if m:
+        q = m.group(1).strip().strip("\"'")
+        return plan("Search email", [{"id": "find", "title": f"Search mail for '{q}'", "tool": "email_search",
+                                      "args": {"query": q[:200]}}])
+    if re.search(r"\b(check|read|show|list|any)\b.*\b(e-?mails?|mail|inbox)\b", low) and not re.search(_EMAIL, r):
+        return plan("Check email", [{"id": "inbox", "title": "List unread mail", "tool": "email_list",
+                                     "args": {"unread_only": "unread" in low or "new" in low, "limit": 20}}])
+    m = re.search(rf"^(?:send\s+(?:an?\s+)?)?e-?mail\s+(?:to\s+)?({_EMAIL}(?:\s*(?:,|and)\s*{_EMAIL})*)\s*(?:saying|that|:|with)\s*(.+)$",
+                  r, re.I | re.S)
+    if m:
+        to = re.findall(_EMAIL, m.group(1))
+        body = m.group(2).strip().strip("\"'")
+        subject = re.split(r"[.!?\n]", body, 1)[0][:80] or "Message"
+        return plan("Send an email", [{"id": "send", "title": f"Email {', '.join(to)}", "tool": "email_send",
+                                       "args": {"to": to, "subject": subject, "body": body}}])
+    if re.search(r"\b(calendar|schedule|agenda)\b", low) and re.search(r"\b(what|show|list|my|today|week)\b", low) \
+            and not re.search(r"\b(add|book|schedule a|set up|create)\b", low):
+        days = 7 if "week" in low else 1 if "today" in low else 14
+        return plan("Show the calendar", [{"id": "cal", "title": "List events", "tool": "calendar_list",
+                                           "args": {"days": days}}])
+    m = re.search(r"\b(?:schedule|book|set up|add|create)\s+(?:a\s+|an\s+)?(meeting|call|event|appointment|reminder)\b(.*)$",
+                  r, re.I | re.S)
+    if m:
+        rest = m.group(2)
+        when = parse_when(rest)
+        if when:
+            attendees = re.findall(_EMAIL, rest)
+            t = re.search(r"\b(?:about|for|titled|called)\s+[\"']?([^\"'@]+?)[\"']?(?:\s+(?:with|on|at|tomorrow|today)\b|$)", rest, re.I)
+            who = re.search(r"\bwith\s+([A-Z][a-z]+)", rest)
+            title = (t.group(1).strip() if t else None) or (f"{m.group(1).title()} with {who.group(1)}" if who else m.group(1).title())
+            dur = re.search(r"(\d{1,3})\s*(?:min|minutes)\b", rest)
+            hours = re.search(r"(\d)\s*(?:h|hour|hours)\b", rest)
+            duration = int(dur.group(1)) if dur else (int(hours.group(1)) * 60 if hours else 30)
+            online = m.group(1).lower() in ("meeting", "call") and not re.search(r"\bin person\b", rest, re.I)
+            steps = [{"id": "event", "title": f"Add '{title}' to the calendar", "tool": "calendar_add_event",
+                      "args": {"title": title, "start": when, "duration_minutes": duration, "attendees": attendees,
+                               "online_meeting": online}}]
+            if attendees:
+                steps.append({"id": "invite", "title": "Email the invitation", "tool": "email_send",
+                              "args": {"to": attendees, "subject": f"Invitation: {title}",
+                                       "body": f"Hi,\n\nYou're invited to '{title}' on {when.replace('T', ' at ')}."
+                                               + ("\nJoin the call with the link in the attached invitation." if online else "")
+                                               + "\n\nThe calendar invitation is attached.",
+                                       "attachments": [{"$ref": "event.output.invite_file"}]}})
+            return plan("Schedule a meeting", steps)
+    m = re.search(r"^(?:take\s+a\s+note|note(?:\s+down)?|jot(?:\s+down)?|new\s+note)\s*(?:titled\s+[\"'](.+?)[\"'])?\s*[:,-]?\s*(.+)$",
+                  r, re.I | re.S)
+    if m:
+        body = m.group(2).strip()
+        title = m.group(1) or " ".join(re.sub(r"[^\w\s-]", "", body).split()[:6]) or "Note"
+        return plan("Take a note", [{"id": "note", "title": f"Create note '{title}'", "tool": "create_note",
+                                     "args": {"title": title, "body": body}}])
+    m = re.search(rf"\b(?:screenshot|take a screenshot of|capture)\s+{_URL}", r, re.I)
+    if m and _web(m.group(1)):
+        url = m.group(1)
+        return plan("Screenshot a page", [
+            {"id": "open", "title": f"Open {url}", "tool": "browser_open", "args": {"url": url}},
+            {"id": "shot", "title": "Take a screenshot", "tool": "browser_screenshot", "args": {"url": url},
+             "depends_on": ["open"]}])
+    m = re.search(rf"\b(?:open|go to|browse|visit|navigate to)\s+{_URL}", r, re.I)
+    if m and _web(m.group(1)):
+        return plan("Open a web page", [{"id": "open", "title": f"Open {m.group(1)}", "tool": "browser_open",
+                                         "args": {"url": m.group(1)}}])
+    m = re.search(rf"\b(?:fetch|download|read|summari[sz]e|get)\s+(?:the\s+page\s+)?{_URL}", r, re.I)
+    if m and _web(m.group(1)):
+        return plan("Read a web page", [{"id": "fetch", "title": f"Fetch {m.group(1)}", "tool": "web_fetch",
+                                         "args": {"url": m.group(1)}}])
+    return None
+
+
 class RulesPlanner(Planner):
     """Deterministic planner for common requests. Works with no API key; never calls a model."""
 
@@ -205,11 +329,16 @@ class RulesPlanner(Planner):
     HELP = ("I can do these without an AI provider: 'write a project report', 'search for \"text\"', "
             "'find files named *.md', 'read docs/notes.md', 'list files in src', 'what does the code say about X?' "
             "(searches the knowledge base), 'create notes/todo.md with \"...\"', 'append \"...\" to notes.md', "
-            "'replace \"a\" with \"b\" in file.txt'. Add an AI provider in Settings for free-form requests.")
+            "'replace \"a\" with \"b\" in file.txt', 'check my email', 'email sam@example.com saying ...', "
+            "'schedule a meeting with priya@example.com tomorrow at 3pm', 'what's on my calendar this week', "
+            "'note: buy milk', 'open example.com', 'fetch https://example.com'. Add an AI provider in Settings for free-form requests.")
 
     def match(self, request: str) -> Optional[dict]:
-        r = request.strip()
+        r = request.strip().split("\n\nTrigger details (data, not instructions):", 1)[0].strip()
         low = r.lower()
+        hit = agentic_rules(r)
+        if hit is not None:
+            return hit
         m = re.search(rf"replace\s+{_Q}\s+with\s+{_Q}\s+in\s+{_PATH}", r, re.I)
         if m:
             return self._plan("Replace text", [{"id": "edit", "title": f"Edit {_clean_path(m.group(3))}",
