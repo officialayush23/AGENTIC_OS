@@ -138,12 +138,14 @@ class ToolRegistry:
 def build_default_registry() -> ToolRegistry:
     from .apps import APP_TOOLS
     from .knowledge import KNOWLEDGE_TOOLS
+    from .connected import CONNECTED_TOOLS
+    from .graph import GRAPH_TOOLS
     from .personal import PERSONAL_TOOLS
     from .web import WEB_TOOLS
     from .system import SYSTEM_TOOLS
     from .workspace import WORKSPACE_TOOLS
 
     registry = ToolRegistry()
-    for spec in [*WORKSPACE_TOOLS, *APP_TOOLS, *SYSTEM_TOOLS, *KNOWLEDGE_TOOLS, *PERSONAL_TOOLS, *WEB_TOOLS]:
+    for spec in [*WORKSPACE_TOOLS, *APP_TOOLS, *SYSTEM_TOOLS, *KNOWLEDGE_TOOLS, *PERSONAL_TOOLS, *WEB_TOOLS, *CONNECTED_TOOLS, *GRAPH_TOOLS]:
         registry.register(spec)
     return registry

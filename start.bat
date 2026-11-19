@@ -40,9 +40,8 @@ echo     ok
 
 echo  [3/5] Installing the frontend (npm)
 pushd frontend
-if not exist node_modules (
-  call npm install --no-audit --no-fund --loglevel=error || (popd & goto :fail)
-)
+rem Always run npm install: it is quick when nothing changed, and it picks up new packages
+call npm install --no-audit --no-fund --loglevel=error || (popd & goto :fail)
 popd
 echo     ok
 

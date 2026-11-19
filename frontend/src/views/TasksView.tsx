@@ -170,12 +170,30 @@ function ApprovalPreview({ p }: { p: any }) {
       </div>
     );
   }
+  if (p.type === "event") {
+    return (
+      <div className="preview-mail">
+        <div className="row"><b>{p.title}</b>{p.meet && <Chip tone="info">Google Meet</Chip>}</div>
+        <div className="small ink2">{new Date(p.start).toLocaleString()} – {new Date(p.end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {p.account}</div>
+        {p.attendees?.length > 0 && <div className="small ink2">Invites {p.attendees.join(", ")}{p.notify ? " (Google emails them)" : ""}</div>}
+        {p.description && <div className="body">{p.description}</div>}
+      </div>
+    );
+  }
+  if (p.type === "notion") {
+    return (
+      <div className="preview-mail">
+        <div className="row"><b>{p.action === "create" ? `New page: ${p.title}` : "Add to page"}</b><Chip tone="info">Notion</Chip></div>
+        <div className="body">{p.content}</div>
+      </div>
+    );
+  }
   if (p.type === "diff") return <DiffView file={{ path: p.path, op: "modify", diff: p.diff, truncated: p.truncated }} />;
   if (p.type === "new_file") return <DiffView file={{ path: p.path, op: "create", diff: (p.content || "").split("\n").map((l: string) => "+" + l).join("\n").replace(/^/, "@@ -0,0 +1 @@\n") }} />;
   return null;
 }
 
-function Decision({ pending, task, act }: { pending: PendingUser; task: Task; act: (p: string, b?: unknown, done?: string) => void }) {
+export function Decision({ pending, task, act }: { pending: PendingUser; task: Task; act: (p: string, b?: unknown, done?: string) => void }) {
   const [answer, setAnswer] = useState("");
   if (pending.kind === "clarify") {
     return (
@@ -247,7 +265,7 @@ function Decision({ pending, task, act }: { pending: PendingUser; task: Task; ac
   );
 }
 
-function PlanView({ task }: { task: Task }) {
+export function PlanView({ task }: { task: Task }) {
   if (!task.plan) return <p className="muted">Planning…</p>;
   if (!task.plan.steps.length) return <p className="muted">No steps.</p>;
   return (

@@ -167,7 +167,9 @@ function ProvidersCard() {
   const run = async (fn: () => Promise<any>, ok: string) => {
     try {
       const r: any = await fn();
-      if (r?.ok === false) toast({ title: "Test failed", text: r?.message, bad: true }); else toast({ title: ok });
+      if (r?.ok === false) toast({ title: "Test failed", text: r?.error?.message ?? r?.message ?? "No details", bad: true });
+      else if (r?.error) toast({ title: "Connected, with a warning", text: r.error.message });
+      else toast({ title: ok });
       await load(); refresh();
     } catch (e: any) { toast({ title: "That didn't work", text: e.message, bad: true }); }
   };
@@ -217,31 +219,57 @@ function ProvidersCard() {
 function AppsCard() {
   const toast = useToast();
   const [apps, setApps] = useState<any[]>([]);
-  const [f, setF] = useState({ id: "", name: "", path: "", args_policy: "workspace_file" });
+  const [found, setFound] = useState<any[] | null>(null);
+  const [q, setQ] = useState("");
+  const [f, setF] = useState({ name: "", path: "" });
   const load = useCallback(async () => setApps((await get("/api/apps")).apps), []);
-  useEffect(() => { void load(); }, [load]);
+  const scan = useCallback(async (refresh = false) => {
+    setFound(null);
+    try { setFound((await get(`/api/apps/discover${refresh ? "?refresh=true" : ""}`)).apps); }
+    catch (e: any) { toast({ title: "Couldn't list apps", text: e.message, bad: true }); setFound([]); }
+  }, [toast]);
+  useEffect(() => { void load(); void scan(); }, [load, scan]);
+  const add = async (name: string, path: string) => {
+    try { await post("/api/apps/add", { name, path }); toast({ title: "Added", text: name }); await load(); await scan(); }
+    catch (e: any) { toast({ title: "Not added", text: e.message, bad: true }); }
+  };
+  const shown = (found ?? []).filter((a) => !q || a.name.toLowerCase().includes(q.toLowerCase()));
   return (
-    <Card>
-      <CardHead title="Allowlisted apps" sub="The only programs a task may open. Each launch asks you first, once or for a while." />
-      <ul className="plain-list">
-        {apps.map((a) => (
-          <li key={a.id} className="plain-row">
-            <span className="m"><b>{a.name}</b><small className="mono ellipsis">{a.path}</small></span>
-            <button className="ee-btn ghost round sm" aria-label={`Remove ${a.name}`} onClick={async () => { await del(`/api/apps/${a.id}`); void load(); }}><Trash2 {...ICON_SM} /></button>
-          </li>
-        ))}
-      </ul>
-      <div className="form-grid" style={{ marginTop: 14 }}>
-        <Field label="Id"><input className="input" placeholder="notepad" value={f.id} onChange={(e) => setF({ ...f, id: e.target.value })} /></Field>
-        <Field label="Name"><input className="input" placeholder="Notepad" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-        <Field label="Program"><input className="input mono" placeholder="C:\Windows\System32\notepad.exe" value={f.path} onChange={(e) => setF({ ...f, path: e.target.value })} /></Field>
-        <Field label="Arguments"><select className="select" value={f.args_policy} onChange={(e) => setF({ ...f, args_policy: e.target.value })}>
-          <option value="workspace_file">May open a workspace file</option><option value="none">No arguments</option></select></Field>
-      </div>
-      <div className="row" style={{ marginTop: 14 }}><button className="ee-btn primary" disabled={!f.id || !f.name || !f.path} onClick={async () => {
-        try { await put(`/api/apps/${f.id}`, { name: f.name, path: f.path, args_policy: f.args_policy }); setF({ id: "", name: "", path: "", args_policy: "workspace_file" }); void load(); toast({ title: "App added" }); }
-        catch (e: any) { toast({ title: "Not added", text: e.message, bad: true }); }
-      }}>Add app</button></div>
-    </Card>
+    <>
+      <Card>
+        <CardHead title="Apps the agent may open" sub="Each launch still asks you first, once or for a while." />
+        {apps.length === 0 ? <p className="muted">None yet. Pick from the list below.</p> : (
+          <ul className="plain-list">
+            {apps.map((a) => (
+              <li key={a.id} className="plain-row">
+                <span className="m"><b>{a.name}</b><small className="mono ellipsis">{a.path}</small></span>
+                <button className="ee-btn ghost round sm" aria-label={`Remove ${a.name}`} onClick={async () => { await del(`/api/apps/${a.id}`); void load(); void scan(); }}><Trash2 {...ICON_SM} /></button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+      <Card>
+        <CardHead title="Installed on this computer" sub={found ? `${found.length} found` : "Looking…"}
+                  right={<button className="ee-btn outline sm" onClick={() => scan(true)}>Scan again</button>} />
+        <input className="input" style={{ marginBottom: 12 }} placeholder="Filter apps" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Filter apps" />
+        <ul className="plain-list list-scroll">
+          {shown.map((a) => (
+            <li key={a.path} className="plain-row">
+              <span className="m"><b>{a.name}</b><small className="mono ellipsis">{a.path}</small></span>
+              {a.added ? <Chip tone="pass">Added</Chip> : <button className="ee-btn outline sm" onClick={() => add(a.name, a.path)}>Add</button>}
+            </li>
+          ))}
+          {found && shown.length === 0 && <p className="muted">Nothing matches.</p>}
+        </ul>
+        <details style={{ marginTop: 12 }}><summary className="muted" style={{ cursor: "pointer" }}>Not listed? Add a program by its path</summary>
+          <div className="form-grid" style={{ marginTop: 10 }}>
+            <Field label="Name"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+            <Field label="Program"><input className="input mono" placeholder="C:\\Program Files\\App\\app.exe" value={f.path} onChange={(e) => setF({ ...f, path: e.target.value })} /></Field>
+          </div>
+          <div className="row" style={{ marginTop: 10 }}><button className="ee-btn outline" disabled={!f.name || !f.path} onClick={() => add(f.name, f.path)}>Add</button></div>
+        </details>
+      </Card>
+    </>
   );
 }

@@ -16,7 +16,11 @@ from ..automation.store import AutomationStore
 from ..kernel.mounts import MountedWorkspace, split_home
 from ..kernel.process import DONE_STATES, ProcState
 from ..services.browser import BrowserService
+from ..services.google import GoogleAuth, GoogleCalendar
 from ..services.mail import MailService
+from ..services.notion import NotionClient
+from ..services.chat import ChatService
+from ..rag.graph import DEEP_SCHEMA, DEEP_SYSTEM, KnowledgeGraph, mail_calendar_extra
 from ..persistence.db import Database
 from ..persistence.repositories import Repositories
 from ..policy.engine import PolicyEngine
@@ -62,6 +66,14 @@ DEMO_FILES = {
 }
 
 
+class GoogleService:
+    """Google account bundle handed to tools: auth + calendar."""
+
+    def __init__(self, auth: GoogleAuth):
+        self.auth = auth
+        self.calendar = GoogleCalendar(auth)
+
+
 class IndexJob:
     def __init__(self) -> None:
         self.running = False
@@ -95,14 +107,23 @@ class AppState:
         self._lock = threading.RLock()
         self.kb = KnowledgeBase(self.db, self._make_embedder())
         self.home_root = self._home()
-        self.mail = MailService(str(settings.data_dir), self.user_settings, self.secrets)
+        self.google = GoogleService(GoogleAuth(self.user_settings, lambda c: self.repos.settings.set("google", c),
+                                               self.secrets))
+        self.notion = NotionClient(self.secrets, self.user_settings)
+        self.mail = MailService(str(settings.data_dir), self.user_settings, self.secrets, google=self.google.auth)
         try:
             self.mail.local.seed_demo()
         except Exception:  # noqa: BLE001
             log.exception("could not seed the demo mailbox")
         self.browser = BrowserService(str(settings.data_dir), self.user_settings)
         self.automation = AutomationStore(self.db)
+        self.kg = KnowledgeGraph(self.db)
+        self.kg_job = IndexJob()
         self.kernel: Optional[Kernel] = None
+        self.chat = ChatService(
+            self.db, spawn=lambda *a, **k: self.kernel.spawn(*a, **k), task_view=lambda pid: self.kernel.proc(pid),
+            outputs=lambda pid, sid: self.kernel.store.get_output(pid, sid), llm=self.llm_provider,
+            publish=self.events.publish_global)
         self.listeners = ListenerService(
             self.automation, spawn=lambda *a, **k: self.kernel.spawn(*a, **k), resolve_root=self.listener_root,
             mail=self.mail, publish=self.events.publish_global)
@@ -175,6 +196,61 @@ class AppState:
             return None
         return rec["id"]
 
+    def llm_provider(self):
+        pid = self.default_provider_id()
+        return self.providers.build(pid) if pid else None
+
+    # ------------------------------------------------------- knowledge graph
+    def build_graph(self, *, deep: bool = False, path_prefix: Optional[str] = None, progress=None,
+                    cancel=lambda: False) -> dict:
+        msgs, events = [], []
+        try:
+            msgs = self.mail.transport().list("INBOX", 50, False)
+        except Exception:  # noqa: BLE001 - mail is optional for the graph
+            msgs = []
+        try:
+            from ..services import calendar as cal
+            cal_path = self.mounted().resolve("~/Calendar/calendar.ics").abs_path
+            events = cal.parse_ics(open(cal_path, encoding="utf-8").read()) if os.path.exists(cal_path) else []
+            if self.google.auth.has("calendar"):
+                from datetime import datetime, timedelta
+                events += self.google.calendar.list_events(datetime.now() - timedelta(days=30), 60)
+        except Exception:  # noqa: BLE001
+            pass
+        deep_fn = None
+        if deep:
+            provider = self.llm_provider()
+            if provider is None:
+                raise ValueError("Deep extraction needs an AI provider (Settings → AI providers).")
+            deep_fn = lambda path, text: provider.generate_structured(  # noqa: E731
+                DEEP_SYSTEM, f"Document: {path}\n<<<\n{text}\n>>>", DEEP_SCHEMA, "knowledge_graph").data
+        res = self.kg.build(path_prefix=path_prefix, extra=mail_calendar_extra(msgs, events), deep=deep_fn,
+                            progress=progress, cancel=cancel)
+        self.events.publish_global({"type": "kg.done", "data": res})
+        return res
+
+    def start_graph(self, deep: bool = False) -> dict:
+        with self._lock:
+            if self.kg_job.running:
+                return self.kg_job.public()
+            job = IndexJob()
+            job.running = True
+            self.kg_job = job
+
+        def progress(p: dict) -> None:
+            job.progress = p
+            self.events.publish_global({"type": "kg.progress", "data": p})
+
+        def run() -> None:
+            try:
+                job.result = self.build_graph(deep=deep, progress=progress, cancel=job.cancel.is_set)
+            except Exception as exc:  # noqa: BLE001
+                job.error = getattr(exc, "message", None) or str(exc)
+            finally:
+                job.running = False
+        threading.Thread(target=run, name="aos-graph", daemon=True).start()
+        return job.public()
+
     def _llm_planner(self) -> Optional[LLMPlanner]:
         mode = self.user_settings().get("planner_mode", "auto")
         if mode == "rules":
@@ -235,7 +311,8 @@ class AppState:
             workspace_root=self.workspace_root(), data_dir=str(self.settings.data_dir),
             settings_fn=self.user_settings, os_adapter=self.os_adapter, events=self.events,
             services={"rag": self.kb, "on_commit": self._on_commit, "on_exit": self._on_exit, "mail": self.mail,
-                      "browser": self.browser},
+                      "browser": self.browser, "google": self.google, "notion": self.notion,
+                      "kg": self.kg, "kg_build": lambda **kw: self.build_graph(**kw)},
             home_root=self.home_root, automation=self.automation,
         )
         kernel.boot()
@@ -243,6 +320,7 @@ class AppState:
 
     def _on_exit(self, pid: str, task_id: str, code: str) -> None:
         self.browser.close(task_id)
+        self.chat.on_exit(pid)
 
     def _on_commit(self, pid: str, files) -> None:
         pcb = self.kernel.procs.get(pid) if self.kernel else None

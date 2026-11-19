@@ -130,3 +130,7 @@ export async function blobUrl(path: string): Promise<string> {
 export function rawUrl(path: string): string {
   return conn.base + path;
 }
+
+export function currentToken(): string | null {
+  return conn.token;
+}

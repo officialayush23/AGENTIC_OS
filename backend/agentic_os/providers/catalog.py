@@ -36,7 +36,7 @@ PROVIDER_KINDS = {
     "gemini": {
         "label": "Google Gemini",
         "default_model": "gemini-flash-latest",
-        "example_models": ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash"],
+        "example_models": ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-flash-lite-latest"],
         "requires_base_url": False,
         "structured_modes": ["json_mode", "prompt"],
         "default_mode": "json_mode",

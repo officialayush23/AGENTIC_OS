@@ -1,13 +1,16 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bell, BookOpen, CalendarDays, CircleHelp, Globe, Home, Inbox, ListChecks, Moon, NotebookPen, Search, Settings, Sun,
-  Workflow,
+  Bell, BookOpen, CalendarDays, CircleHelp, Globe, Inbox, LayoutDashboard, ListChecks, MessageCircle, Moon, Network,
+  NotebookPen, Plug, Search, Settings, Sun, Workflow,
 } from "lucide-react";
 import { ApiError, connect, get, post, subscribe, type Connection } from "./api";
 import type { Task } from "./types";
 import { ICON, ToastHost, taskStatus } from "./ui";
 import { PairView } from "./views/PairView";
-import { HomeView } from "./views/HomeView";
+import { ChatView } from "./views/ChatView";
+import { DashboardView } from "./views/DashboardView";
+import { GraphView } from "./views/GraphView";
+import { ConnectionsView } from "./views/ConnectionsView";
 import { TasksView } from "./views/TasksView";
 import { InboxView } from "./views/InboxView";
 import { CalendarView } from "./views/CalendarView";
@@ -17,10 +20,12 @@ import { BrowserView } from "./views/BrowserView";
 import { KnowledgeView } from "./views/KnowledgeView";
 import { SettingsView } from "./views/SettingsView";
 
-export type View = "home" | "tasks" | "inbox" | "calendar" | "notes" | "automations" | "browser" | "knowledge" | "settings";
+export type View = "chat" | "dashboard" | "tasks" | "inbox" | "calendar" | "notes" | "automations" | "browser" | "knowledge"
+  | "graph" | "connections" | "settings";
 
 const NAV: ({ id: View; label: string; icon: any } | { sep: string })[] = [
-  { id: "home", label: "Home", icon: Home },
+  { id: "chat", label: "Conversation", icon: MessageCircle },
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "tasks", label: "Tasks", icon: ListChecks },
   { sep: "--ws-overview" },
   { id: "inbox", label: "Inbox", icon: Inbox },
@@ -30,11 +35,13 @@ const NAV: ({ id: View; label: string; icon: any } | { sep: string })[] = [
   { id: "automations", label: "Schedules and listeners", icon: Workflow },
   { id: "browser", label: "Browser", icon: Globe },
   { id: "knowledge", label: "Knowledge", icon: BookOpen },
+  { id: "graph", label: "Knowledge graph", icon: Network },
   { sep: "--ws-system" },
+  { id: "connections", label: "Connections", icon: Plug },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 const TITLES: Record<View, string> = {
-  home: "Home", tasks: "Tasks", inbox: "Inbox", calendar: "Calendar", notes: "Notes", automations: "Automations",
+  chat: "Conversation", dashboard: "Dashboard", graph: "Knowledge graph", connections: "Connections", tasks: "Tasks", inbox: "Inbox", calendar: "Calendar", notes: "Notes", automations: "Automations",
   browser: "Browser", knowledge: "Knowledge", settings: "Settings",
 };
 
@@ -54,8 +61,8 @@ export const useLive = () => useContext(LiveCtx);
 
 function parseHash(): { view: View; sel: string | null } {
   const m = /^#\/(\w+)(?:\/(.+))?/.exec(window.location.hash);
-  const v = (m?.[1] ?? "home") as View;
-  return { view: v in TITLES ? v : "home", sel: m?.[2] ? decodeURIComponent(m[2]) : null };
+  const v = (m?.[1] ?? "chat") as View;
+  return { view: v in TITLES ? v : "chat", sel: m?.[2] ? decodeURIComponent(m[2]) : null };
 }
 
 export function App() {
@@ -71,7 +78,7 @@ export function App() {
         let s = await get<{ paired: boolean }>("/api/auth/session");
         const m = /[#&]pair=([A-Za-z0-9-]{4,32})/.exec(window.location.hash);
         if (m) {
-          history.replaceState(null, "", window.location.pathname + "#/home");
+          history.replaceState(null, "", window.location.pathname + "#/chat");
           if (!s.paired) {
             try { await post("/api/auth/pair", { code: m[1] }); s = { paired: true }; } catch { /* fall back to manual */ }
           }
@@ -165,7 +172,7 @@ function Shell() {
       <div className="app">
         <aside className="rail-col">
           <div className="ee-rail">
-            <button className="ee-mark" aria-label="Agentic OS home" onClick={() => nav("home")}>
+            <button className="ee-mark" aria-label="Agentic OS home" onClick={() => nav("chat")}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
                 <path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Z" /><path d="M12 12 4 7.5M12 12l8-4.5M12 12v9" />
               </svg>
@@ -185,15 +192,15 @@ function Shell() {
         </aside>
         <div className="main-col">
           <header className="ee-top">
-            <button className="ee-crumb" onClick={() => nav("home")}>Agentic OS</button>
-            {view !== "home" && <><span className="crumb-sep" aria-hidden>›</span><span className="ee-crumb on">{TITLES[view]}</span></>}
+            <button className="ee-crumb" onClick={() => nav("chat")}>Agentic OS</button>
+            {view !== "chat" && <><span className="crumb-sep" aria-hidden>›</span><span className="ee-crumb on">{TITLES[view]}</span></>}
             <form className="ee-search" role="search" onSubmit={(e) => { e.preventDefault(); if (q.trim()) { nav("knowledge", q.trim()); setQ(""); } }}>
               <Search size={16} strokeWidth={1.6} aria-hidden />
               <input aria-label="Search notes, files and knowledge" placeholder="Search notes and files" value={q}
                      onChange={(e) => setQ(e.target.value)} />
             </form>
             <button className="ee-round" aria-label="Help" title="Every task is a transaction: staged, reviewed, committed, undoable."
-                    onClick={() => nav("home")}><CircleHelp {...ICON} /></button>
+                    onClick={() => nav("chat")}><CircleHelp {...ICON} /></button>
             <button className="ee-round" aria-label={theme === "dark" ? "Use light theme" : "Use dark theme"}
                     onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
               {theme === "dark" ? <Sun {...ICON} /> : <Moon {...ICON} />}
@@ -223,8 +230,11 @@ function Shell() {
             </button>
           </header>
           <div className="scroll">
-            <main className="content" key={view}>
-              {view === "home" && <HomeView />}
+            <main className={`content ${view === "chat" ? "content-chat" : ""}`} key={view}>
+              {view === "chat" && <ChatView />}
+              {view === "dashboard" && <DashboardView />}
+              {view === "graph" && <GraphView />}
+              {view === "connections" && <ConnectionsView />}
               {view === "tasks" && <TasksView />}
               {view === "inbox" && <InboxView />}
               {view === "calendar" && <CalendarView />}

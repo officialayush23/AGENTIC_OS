@@ -252,7 +252,8 @@ class Kernel:
             self.tasks.create({"id": task_id, "title": pcb.title, "request": pcb.request, "status": "running",
                                "planner_mode": self.planner.kind, "thread_id": pid})
             for kind, scope, rights in (("fs", "", ("read", "write")), ("sys", "*", ("read",)), ("compute", "*", ("use",)),
-                                       ("mail", "*", ("read",))):
+                                       ("mail", "*", ("read",)), ("google", "*", ("read",)),
+                                       ("notion", "*", ("read",))):
                 pcb.caps.append(self.caps.grant(pid, kind, scope, rights, origin="spawn").cap_id)
             self.procs[pid] = pcb
             self._cancel[pid] = threading.Event()

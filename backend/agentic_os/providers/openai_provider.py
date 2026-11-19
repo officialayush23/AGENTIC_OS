@@ -141,6 +141,17 @@ class OpenAIProvider(LLMProvider):
             raise self._map_error(sdk, exc)
 
     # -------------------------------------------------------------- errors
+    def transcribe(self, audio: bytes, mime: str) -> str:
+        sdk, client = self._get_client()
+        ext = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/wav": "wav", "audio/mp4": "mp4", "audio/mpeg": "mp3"}.get(
+            mime.split(";")[0], "webm")
+        try:
+            res = client.audio.transcriptions.create(model=self.config.extra.get("transcribe_model") or "gpt-4o-mini-transcribe",
+                                                     file=(f"speech.{ext}", audio, mime.split(";")[0]))
+        except Exception as exc:  # noqa: BLE001
+            raise self._map_error(sdk, exc)
+        return (getattr(res, "text", "") or "").strip()
+
     def _map_error(self, sdk, exc: Exception) -> ProviderError:
         kind = self.kind
         status = getattr(exc, "status_code", None)

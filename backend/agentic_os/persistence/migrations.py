@@ -333,4 +333,47 @@ CREATE TABLE IF NOT EXISTS trigger_runs (
 CREATE INDEX IF NOT EXISTS idx_trig_src ON trigger_runs(source_kind, source_id, fired_at);
 """,
     ),
+    (
+        5,
+        "conversations and knowledge graph",
+        """
+CREATE TABLE IF NOT EXISTS conversations (
+    id          TEXT PRIMARY KEY,
+    title       TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id              TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role            TEXT NOT NULL,          -- user | assistant
+    text            TEXT NOT NULL,
+    pid             TEXT,
+    meta_json       TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_messages(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_chat_pid ON chat_messages(pid);
+
+CREATE TABLE IF NOT EXISTS kg_nodes (
+    id          TEXT PRIMARY KEY,           -- type:normalised-name
+    label       TEXT NOT NULL,
+    type        TEXT NOT NULL,              -- document | person | concept | tag | module | site | event | topic
+    mentions    INTEGER NOT NULL DEFAULT 0,
+    meta_json   TEXT NOT NULL DEFAULT '{}',
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_kg_type ON kg_nodes(type);
+CREATE TABLE IF NOT EXISTS kg_edges (
+    src         TEXT NOT NULL,
+    dst         TEXT NOT NULL,
+    rel         TEXT NOT NULL,
+    weight      REAL NOT NULL DEFAULT 1,
+    source      TEXT,                       -- document the evidence came from
+    PRIMARY KEY (src, dst, rel)
+);
+CREATE INDEX IF NOT EXISTS idx_kg_dst ON kg_edges(dst);
+""",
+    ),
 ]

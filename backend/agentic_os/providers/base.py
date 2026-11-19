@@ -339,6 +339,10 @@ class LLMProvider(ABC):
             raise ProviderError(ErrorCode.INVALID_OUTPUT, "structured output must be a JSON object", provider_kind=self.kind)
         return result
 
+    def transcribe(self, audio: bytes, mime: str) -> str:
+        """Speech to text. Providers that can hear override this."""
+        raise ProviderError(ErrorCode.UNSUPPORTED_FEATURE, f"{self.kind} cannot transcribe audio here", provider_kind=self.kind)
+
     def stream_text(self, system: str, user: str, *, max_output_tokens: Optional[int] = None) -> Iterator[str]:
         return self._stream(system, user, max_output_tokens=int(max_output_tokens or self.config.max_output_tokens))
 
@@ -356,7 +360,7 @@ class LLMProvider(ABC):
                 'Return JSON exactly like {"ok": true, "echo": "agentic-os"}.',
                 schema,
                 "connectivity_check",
-                max_output_tokens=min(1024, max(256, self.config.max_output_tokens)),
+                max_output_tokens=max(2048, self.config.max_output_tokens),   # thinking models spend tokens before answering
             )
             data = result.data or {}
             structured_ok = data.get("ok") is True

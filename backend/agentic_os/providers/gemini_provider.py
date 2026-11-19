@@ -125,6 +125,20 @@ class GeminiProvider(LLMProvider):
         except Exception as exc:  # noqa: BLE001
             raise self._map_error(exc)
 
+    def transcribe(self, audio: bytes, mime: str) -> str:
+        types, client = self._get_client()
+        try:
+            resp = client.models.generate_content(
+                model=self.config.model,
+                contents=[types.Part.from_bytes(data=audio, mime_type=mime.split(";")[0] or "audio/webm"),
+                          "Transcribe this speech exactly, in the language spoken. Reply with the words only."])
+        except Exception as exc:  # noqa: BLE001
+            raise self._map_error(exc)
+        try:
+            return (resp.text or "").strip()
+        except Exception:  # noqa: BLE001
+            return ""
+
     def _map_error(self, exc: Exception) -> ProviderError:
         kind = self.kind
         try:

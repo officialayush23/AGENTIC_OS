@@ -148,3 +148,49 @@ Knowledge, Settings. `frontend/src/styles/tokens.css` and `ee.css` come from the
   other people get the event.
 - Browser sessions start signed out. Sites that need your account need you to sign in in the visible
   browser window (Settings → Browser → show the window) during the task.
+
+## 13. Conversation-first and voice-first (session 5)
+
+The app opens on **Conversation**. Every message becomes a process (origin `chat`) with the recent
+conversation passed as fenced context; the reply bubble shows the live task (status, steps, approvals and
+the review diff inline) and, when the process exits, is rewritten as a plain answer plus **result cards**
+(emails, events with Join buttons, files, search hits, web pages, screenshots, Notion pages, graph stats).
+With an AI provider the answer text is written by the model from the step outputs; offline it is
+composed from templates. If the agent asked a question, the next message answers it. A `respond_to_user`
+tool lets the planner answer questions and small talk directly.
+
+Voice: the big microphone (or Ctrl+Space) uses the browser's speech recognition when available, otherwise
+it records audio and sends it to `POST /api/voice/transcribe`, which uses the AI provider (Gemini or OpenAI
+`gpt-4o-mini-transcribe`). Replies to spoken messages are read aloud (speech synthesis); hands-free mode
+listens again after each spoken reply.
+
+## 14. Knowledge graph
+
+`rag/graph.py` builds a graph from everything indexed (workspace, Home notes, knowledge notes) plus mail
+senders and calendar attendees. The offline extractor finds documents, `[[wiki links]]`, `#tags`, headings
+(topics), people (email addresses), code imports (modules), web domains and recurring Title Case phrases,
+and links entities that appear in the same passage. **Deep build** sends each document (up to 40) to the
+AI provider for typed entities and relations. Every edge records the document it came from. Tools:
+`build_knowledge_graph`, `kg_query`. API: `GET /api/kg`, `GET /api/kg/node`, `GET /api/kg/search`,
+`POST /api/kg/build`. The Knowledge graph screen draws it with a force layout (pan, zoom, drag, focus,
+filter by kind, evidence list).
+
+## 15. Connections
+
+- **Google** (Gmail, Calendar, Meet): OAuth for installed apps with PKCE and a loopback redirect to
+  `/oauth/google/callback`. The user pastes the client ID and secret of a Desktop-app OAuth client from
+  their own Cloud project (steps are shown in the app). Refresh token and client secret go to the
+  credential store. Gmail becomes a mail transport (`mode: gmail`); `gcal_list_events` and
+  `gcal_create_event` (Google Meet link, Google sends the invitations, deterministic event id so a retry
+  never duplicates) use the new `google` capability kind; writing is a one-shot grant.
+- **Gmail with an app password**: IMAP/SMTP preset for imap.gmail.com / smtp.gmail.com; no Cloud project.
+- **Notion**: internal integration token; `notion_search`, `notion_read_page`, `notion_create_page`,
+  `notion_append` (markdown → blocks), `notion` capability kind, a default parent page.
+- **Apps**: Settings → Apps lists the programs installed on the computer (Start menu shortcuts and App Paths
+  on Windows) for one-click allowlisting.
+
+## 16. Dashboard
+
+`GET /api/dashboard` aggregates all processes: KPIs, tasks per day by outcome with automation runs, most
+used tools, where tasks came from, recent tasks, upcoming events (local + Google), unread mail, knowledge
+and graph size, and connection status.

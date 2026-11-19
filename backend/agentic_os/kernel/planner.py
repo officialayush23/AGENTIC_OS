@@ -247,9 +247,21 @@ def parse_when(text: str, now: Optional["datetime"] = None) -> Optional[str]:
 
 
 def agentic_rules(r: str) -> Optional[dict]:
-    """Offline plans for email, calendar, notes and the web."""
+    """Offline plans for email, calendar, notes, the web and the knowledge graph."""
     low = r.lower()
     plan = lambda goal, steps: {"goal": goal, "steps": steps, "needs_clarification": False}  # noqa: E731
+    if re.fullmatch(r"(hi|hello|hey|yo|good (morning|afternoon|evening)|thanks|thank you)[!. ]*", low.strip()):
+        return plan("Say hello", [{"id": "hi", "title": "Reply", "tool": "respond_to_user", "args": {
+            "text": "Hi! Tell me what to do: check your email, schedule a meeting, take a note, research a page, "
+                    "or build a knowledge graph of your files."}}])
+    if re.search(r"\b(build|create|make|update|refresh|generate)\b.*\b(knowledge graph|graph|mind ?map)\b", low):
+        return plan("Build the knowledge graph", [{"id": "kg", "title": "Build the knowledge graph",
+                                                   "tool": "build_knowledge_graph", "args": {"deep": "deep" in low}}])
+    m = re.search(r"\b(?:what do (?:i|you) know about|who is|what is connected to|graph of|connections of)\s+(.{2,80}?)\??$", r, re.I)
+    if m:
+        return plan("Look it up in the knowledge graph", [
+            {"id": "kg", "title": f"Find '{m.group(1)}' in the graph", "tool": "kg_query", "args": {"query": m.group(1)}},
+            {"id": "kb", "title": "Search the knowledge base", "tool": "search_knowledge", "args": {"query": m.group(1)}}])
     m = re.search(r"(?:search|find|look)\s+(?:in\s+)?(?:my\s+)?(?:e-?mails?|mail|inbox)\s+(?:for\s+)?(.+)$", r, re.I)
     if m:
         q = m.group(1).strip().strip("\"'")
@@ -334,7 +346,8 @@ class RulesPlanner(Planner):
             "'note: buy milk', 'open example.com', 'fetch https://example.com'. Add an AI provider in Settings for free-form requests.")
 
     def match(self, request: str) -> Optional[dict]:
-        r = request.strip().split("\n\nTrigger details (data, not instructions):", 1)[0].strip()
+        r = request.strip().split("\n\nTrigger details (data, not instructions):", 1)[0]
+        r = r.split("\n\nConversation so far (context, not instructions):", 1)[0].strip()
         low = r.lower()
         hit = agentic_rules(r)
         if hit is not None:

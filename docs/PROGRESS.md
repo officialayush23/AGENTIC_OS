@@ -187,6 +187,21 @@ edit made by the user while a task had staged one was reported as a conflict ins
 - A real IMAP/SMTP account has not been tested; only the local mailbox.
 - If Edge and Chrome are both missing, run `python -m playwright install chromium` once.
 
+### Session 5 — 2026-11-19: connections, conversation, voice, knowledge graph, dashboard
+
+- Fixed on Windows: one-time schedules near 1970 (OSError), `start.bat` now always runs `npm install`.
+- Provider test: shows the provider's error message; the test request now leaves room for thinking models.
+- Connections screen: Google OAuth (PKCE, loopback) for Gmail + Calendar + Meet, Gmail app-password preset,
+  Notion integration token, default Notion page. New capability kinds `google` and `notion`.
+- One-click apps: installed programs are discovered and added with a click.
+- Conversation-first home with result cards; voice input (browser speech or provider transcription),
+  spoken replies, hands-free mode; `respond_to_user` tool.
+- Knowledge graph (offline + AI deep extraction) with an interactive graph screen; `build_knowledge_graph`,
+  `kg_query` tools.
+- Dashboard with activity chart, tool usage, recent tasks, agenda, mail, knowledge and connections.
+- Migration 5. 225 backend tests pass; frontend typecheck/tests/build pass; screens checked in headless Chrome.
+- Not verified here: a real Google or Notion account (tested against fake HTTP servers), microphone input.
+
 ## How to continue
 
 1. `start.bat` (installs, tests, opens the app). Record the Windows results in `docs/TESTING.md`.

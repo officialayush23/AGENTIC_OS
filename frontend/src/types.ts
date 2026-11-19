@@ -73,7 +73,7 @@ export interface Task {
   txn_id: string | null;
   replans: number;
   auto_commit?: boolean;
-  origin?: { kind: "user" | "schedule" | "listener"; id?: string; name?: string; trigger?: string; manual?: boolean };
+  origin?: { kind: "user" | "schedule" | "listener" | "chat"; id?: string; name?: string; trigger?: string; manual?: boolean };
   created_at?: string;
   status?: string;
 }

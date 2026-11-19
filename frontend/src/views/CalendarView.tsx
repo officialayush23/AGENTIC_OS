@@ -22,8 +22,11 @@ export function CalendarView() {
   const [adding, setAdding] = useState(false);
   const [meeting, setMeeting] = useState(false);
   const data = useAsync(() => get<{ events: CalEvent[] }>(`/api/calendar?start=${iso(week)}&days=7`), [week, bump]);
+  const gdata = useAsync(() => get<{ events: any[]; connected: boolean }>(`/api/connections/google/events?start=${iso(week)}&days=7`), [week, bump]);
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => { const d = new Date(week); d.setDate(d.getDate() + i); return d; }), [week]);
-  const evs = data.data?.events ?? [];
+  const evs: CalEvent[] = [...(data.data?.events ?? []), ...((gdata.data?.events ?? []).map((e: any) => ({ ...e, uid: e.id })))]
+    .sort((a, b) => a.start.localeCompare(b.start));
+  const google = !!gdata.data?.connected;
   const todayIso = iso(new Date());
   const shift = (n: number) => setWeek((w) => { const d = new Date(w); d.setDate(d.getDate() + n * 7); return d; });
 
@@ -63,7 +66,7 @@ export function CalendarView() {
                 {list.map((e) => (
                   <button key={e.uid} className="ev" onClick={() => setOpen(e)}>
                     <small>{hm(e.start)}{e.end ? `–${hm(e.end)}` : ""}</small>
-                    <b>{e.title}</b>
+                    <b>{e.title}</b>{(e as any).source === "google" && <small>Google</small>}
                     {(e.url || e.attendees.length > 0) && <small>{e.url ? "Video call" : ""}{e.url && e.attendees.length ? " · " : ""}{e.attendees.length ? `${e.attendees.length} invited` : ""}</small>}
                   </button>
                 ))}
@@ -73,7 +76,17 @@ export function CalendarView() {
         </div>
       </Card>
 
-      {open && (
+      {open && (open as any).source === "google" && (
+        <Dialog title={open.title} onClose={() => setOpen(null)}>
+          <dl className="kv"><dt>When</dt><dd>{new Date(open.start).toLocaleString()}</dd>
+            {open.attendees.length > 0 && <><dt>Invited</dt><dd>{open.attendees.join(", ")}</dd></>}</dl>
+          <div className="row">
+            {open.url && <a className="ee-btn primary" href={open.url} target="_blank" rel="noreferrer"><Video {...ICON_SM} /> Join Google Meet</a>}
+            {(open as any).html_link && <a className="ee-btn outline" href={(open as any).html_link} target="_blank" rel="noreferrer">Open in Google Calendar</a>}
+          </div>
+        </Dialog>
+      )}
+      {open && (open as any).source !== "google" && (
         <Dialog title={open.title} onClose={() => setOpen(null)}>
           <dl className="kv">
             <dt>When</dt><dd>{new Date(open.start).toLocaleString()}{open.end ? ` – ${hm(open.end)}` : ""}</dd>
@@ -90,7 +103,7 @@ export function CalendarView() {
         </Dialog>
       )}
       {adding && <AddEvent onClose={() => setAdding(false)} onDone={() => { setAdding(false); data.reload(); }} />}
-      {meeting && <MeetingDialog onClose={() => setMeeting(false)} onStarted={(pid) => { setMeeting(false); refresh(); nav("tasks", pid); }} />}
+      {meeting && <MeetingDialog google={google} onClose={() => setMeeting(false)} onStarted={(pid) => { setMeeting(false); refresh(); nav("tasks", pid); }} />}
     </>
   );
 }
@@ -120,7 +133,8 @@ function AddEvent({ onClose, onDone }: { onClose: () => void; onDone: () => void
   );
 }
 
-function MeetingDialog({ onClose, onStarted }: { onClose: () => void; onStarted: (pid: string) => void }) {
+function MeetingDialog({ google, onClose, onStarted }: { google: boolean; onClose: () => void; onStarted: (pid: string) => void }) {
+  const [useGoogle, setUseGoogle] = useState(google);
   const [title, setTitle] = useState("");
   const [who, setWho] = useState("");
   const [start, setStart] = useState(() => { const d = new Date(Date.now() + 86400e3); return `${iso(d)}T11:00`; });
@@ -130,6 +144,15 @@ function MeetingDialog({ onClose, onStarted }: { onClose: () => void; onStarted:
   const [err, setErr] = useState<string | null>(null);
   const go = async () => {
     const attendees = who.split(/[,;\s]+/).filter(Boolean);
+    if (useGoogle) {
+      try {
+        const t = await post<Task>("/api/tasks", { request: `Book '${title}' in Google Calendar on ${start}`, title: `Meeting: ${title}`,
+          plan: { goal: "Book a Google Calendar meeting", steps: [{ id: "event", title: `Book '${title}' with Google Meet`, tool: "gcal_create_event",
+            args: { title, start, duration_minutes: dur, attendees, google_meet: online, send_invites: true, description: note || undefined } }] } });
+        onStarted(t.pid);
+      } catch (e: any) { setErr(e.message); }
+      return;
+    }
     const steps: any[] = [{ id: "event", title: `Add '${title}' to the calendar`, tool: "calendar_add_event",
       args: { title, start, duration_minutes: dur, attendees, online_meeting: online, description: note || undefined } }];
     if (attendees.length) {
@@ -154,7 +177,8 @@ function MeetingDialog({ onClose, onStarted }: { onClose: () => void; onStarted:
         <Field label="Length (minutes)"><input className="input" type="number" min={5} step={5} value={dur} onChange={(e) => setDur(Number(e.target.value))} /></Field>
       </div>
       <Field label="Agenda (optional)"><textarea className="textarea" rows={3} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
-      <Switch checked={online} onChange={setOnline} label="Video call (Jitsi Meet link)" />
+      {google && <Switch checked={useGoogle} onChange={setUseGoogle} label="Book in Google Calendar (Google sends the invitations)" />}
+      <Switch checked={online} onChange={setOnline} label={useGoogle ? "Google Meet link" : "Video call (Jitsi Meet link)"} />
       {err && <Banner tone="bad">{err}</Banner>}
       <div className="row"><button className="ee-btn primary" disabled={!title.trim()} onClick={go}>Plan the meeting</button></div>
     </Dialog>

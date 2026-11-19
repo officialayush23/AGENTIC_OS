@@ -21,7 +21,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from ..util import utc_now_iso
 
 KINDS = {"fs": {"read", "write"}, "app": {"launch"}, "sys": {"read"}, "compute": {"use"},
-         "mail": {"read", "send"}, "web": {"read", "act"}}
+         "mail": {"read", "send"}, "web": {"read", "act"}, "google": {"read", "write"}, "notion": {"read", "write"}}
 
 # Tool-level capability names (ToolSpec.capabilities) -> (kind, right)
 TOOL_CAP_MAP: Dict[str, Tuple[str, str]] = {
@@ -35,10 +35,14 @@ TOOL_CAP_MAP: Dict[str, Tuple[str, str]] = {
     "mail.send": ("mail", "send"),
     "web.read": ("web", "read"),
     "web.act": ("web", "act"),
+    "google.read": ("google", "read"),
+    "google.write": ("google", "write"),
+    "notion.read": ("notion", "read"),
+    "notion.write": ("notion", "write"),
 }
 
 # Capabilities whose actions cannot be staged in the overlay (they leave the computer or launch things).
-IRREVERSIBLE_TOOL_CAPS = {"apps.launch", "mail.send", "web.act"}
+IRREVERSIBLE_TOOL_CAPS = {"apps.launch", "mail.send", "web.act", "google.write", "notion.write"}
 # Capabilities a process does not hold at spawn but may be granted by the user on request.
 GRANTABLE_TOOL_CAPS = IRREVERSIBLE_TOOL_CAPS | {"web.read"}
 

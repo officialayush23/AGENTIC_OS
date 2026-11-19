@@ -498,6 +498,10 @@ def create_app(settings: Settings, state: Optional[AppState] = None, *, start_ba
 
     from .routes_agentic import register as register_agentic
     register_agentic(api, app, st, ApiError)
+    from .routes_connections import register as register_connections
+    register_connections(api, app, st, ApiError)
+    from .routes_chat import register as register_chat
+    register_chat(api, app, st, ApiError)
     app.include_router(api)
 
     # --------------------------------------------------------- static UI (browser mode)

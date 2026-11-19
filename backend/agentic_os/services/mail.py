@@ -373,10 +373,11 @@ class ImapSmtpTransport:
 class MailService:
     """Resolves the configured transport on each call (settings can change at runtime)."""
 
-    def __init__(self, data_dir: str, settings_fn, secrets):
+    def __init__(self, data_dir: str, settings_fn, secrets, google=None):
         self.local = LocalMailbox(os.path.join(data_dir, "mail"))
         self.settings_fn = settings_fn
         self.secrets = secrets
+        self.google = google          # GoogleAuth, for mode "gmail" (Gmail API)
 
     def config(self) -> dict:
         return dict((self.settings_fn() or {}).get("mail") or {})
@@ -386,6 +387,11 @@ class MailService:
         mode = cfg.get("mode") or "local"
         if mode == "off":
             raise MailError("MAIL_OFF", "Email is turned off in Settings → Email.")
+        if mode == "gmail":
+            from .google import GmailTransport
+            if self.google is None or not self.google.has("gmail"):
+                raise MailError("MAIL_NOT_CONFIGURED", "Sign in to Google with Gmail allowed (Connections → Google).")
+            return GmailTransport(self.google)
         if mode == "imap":
             try:
                 password = self.secrets.get(MAIL_SECRET)
@@ -408,6 +414,10 @@ class MailService:
             stored = bool(self.secrets.get(MAIL_SECRET))
         except Exception:  # noqa: BLE001
             stored = False
+        if mode == "gmail" and self.google is not None:
+            g = self.google.status()
+            return {"mode": mode, "address": g.get("email") or "", "imap_host": None, "smtp_host": None,
+                    "password_stored": g["connected"], "delivers": g["connected"] and "gmail" in g["services"]}
         return {"mode": mode, "address": cfg.get("address") or (self.local.address if mode == "local" else ""),
                 "imap_host": cfg.get("imap_host"), "smtp_host": cfg.get("smtp_host"), "password_stored": stored,
                 "delivers": mode == "imap"}

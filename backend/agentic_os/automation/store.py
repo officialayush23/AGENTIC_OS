@@ -40,9 +40,14 @@ def next_run(kind: str, spec: str, after: float) -> Optional[float]:
         return after + secs
     if kind == "once":
         try:
-            at = datetime.fromisoformat(spec).timestamp()
+            when = datetime.fromisoformat(spec)
         except ValueError:
             raise AutomationError("SCHEDULE_INVALID", "use a date and time like 2026-11-20T09:30") from None
+        try:
+            at = when.timestamp()
+        except (OSError, OverflowError):
+            # Windows cannot convert dates near or before 1970 to local time: such a time is in the past anyway.
+            return None
         return at if at > after else None
     raise AutomationError("SCHEDULE_INVALID", f"unknown schedule kind {kind!r}")
 
