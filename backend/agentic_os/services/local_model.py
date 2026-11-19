@@ -120,8 +120,21 @@ class LocalModelService:
     def installed(self) -> List[str]:
         return [m for m in CATALOG if os.path.exists(os.path.join(self.path(m), READY_MARK))]
 
+    def disk(self) -> dict:
+        probe = self.models_dir
+        while probe and not os.path.exists(probe):
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                break
+            probe = parent
+        try:
+            free = shutil.disk_usage(probe or ".").free
+        except OSError:
+            free = None
+        return {"folder": self.models_dir, "free_gb": round(free / 2**30, 1) if free is not None else None}
+
     def status(self) -> dict:
-        return {"runtime": runtime_status(), "installed": self.installed(), "recommended": default_model_for_platform(),
+        return {"runtime": runtime_status(), "storage": self.disk(), "installed": self.installed(), "recommended": default_model_for_platform(),
                 "platform": sys.platform, "python": ".".join(map(str, sys.version_info[:3])),
                 "catalog": [{"id": k, **{x: v[x] for x in ("label", "params", "device", "size_mb", "vram_gb", "note", "license")},
                              "repo": v["repo"], "installed": k in self.installed()} for k, v in CATALOG.items()],
@@ -131,6 +144,10 @@ class LocalModelService:
     def install(self, model_id: str) -> dict:
         if model_id not in CATALOG:
             raise KeyError(model_id)
+        free = self.disk()["free_gb"]
+        if free is not None and free * 1024 < CATALOG[model_id]["size_mb"] * 1.1 and model_id not in self.installed():
+            raise OSError(f"not enough free space in {self.models_dir}: {free} GB free, "
+                          f"{CATALOG[model_id]['size_mb'] / 1024:.1f} GB needed")
         with self._lock:
             if self.job and self.job.running:
                 return self.job.public()
@@ -157,7 +174,7 @@ class LocalModelService:
                 job.stage, job.message = "runtime", f"Installing {pkg} (one time)"
                 if rt["installed"] and rt["package"] != pkg:
                     self._pip(["uninstall", "-y", rt["package"], "onnxruntime"])
-                self._pip(["install", "--disable-pip-version-check", "--no-input", pkg])
+                self._pip(["install", "--disable-pip-version-check", "--no-input", "--no-cache-dir", pkg])
                 importlib.invalidate_caches()
             job.stage, job.message = "download", f"Downloading {spec['repo']}"
             self._download(job, spec)

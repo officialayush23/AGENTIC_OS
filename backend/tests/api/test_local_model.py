@@ -97,3 +97,14 @@ def test_local_model_api(client):
     chain = st.llm_provider()
     kinds = [p.kind for p in getattr(chain, "providers", [chain])]
     assert kinds[-1] == "local"
+
+
+def test_models_folder_defaults_next_to_app_and_can_change(client, tmp_path):
+    s = client.get("/api/local-model").json()
+    assert s["storage"]["folder"].endswith("models")
+    new = tmp_path / "D-drive-models"
+    r = client.put("/api/local-model/folder", json={"path": str(new)})
+    assert r.status_code == 200, r.text
+    assert r.json()["storage"]["folder"] == str(new) and new.is_dir()
+    assert client.app.state.aos.providers.models_dir == str(new)
+    assert client.put("/api/local-model/folder", json={"path": "relative/path"}).status_code == 400

@@ -5,6 +5,7 @@ POST   /api/local-model/install      {"model": id}  install runtime + download +
 POST   /api/local-model/cancel       stop a download
 POST   /api/local-model/test         run the connection test again
 PUT    /api/local-model/use          {"use": "backup" | "main" | "off"}
+PUT    /api/local-model/folder       {"path": "D:\\AI\\models"}  where models are stored
 DELETE /api/local-model/{model_id}   delete the files
 """
 
@@ -19,6 +20,10 @@ from pydantic import BaseModel
 
 class InstallIn(BaseModel):
     model: str
+
+
+class FolderIn(BaseModel):
+    path: str
 
 
 class UseIn(BaseModel):
@@ -47,6 +52,20 @@ def register(api: APIRouter, app: FastAPI, st, ApiError) -> None:
             return st.local_model.install(body.model)
         except KeyError:
             raise ApiError(404, "MODEL_UNKNOWN", f"Unknown local model '{body.model}'.")
+        except OSError as exc:
+            raise ApiError(400, "DISK_SPACE", str(exc))
+
+    @api.put("/local-model/folder")
+    async def local_folder(body: FolderIn):
+        if not body.path.strip() or not __import__("os").path.isabs(__import__("os").path.expanduser(body.path.strip())):
+            raise ApiError(400, "FOLDER_INVALID", "Give a full folder path, for example D:\\AI\\models.")
+        if st.local_model.job and st.local_model.job.running:
+            raise ApiError(409, "BUSY", "Wait for the current download to finish.")
+        try:
+            path = st.set_models_dir(body.path)
+        except OSError as exc:
+            raise ApiError(400, "FOLDER_NOT_WRITABLE", f"Cannot use that folder: {exc}")
+        return {**st.local_model.status(), **usage(), "folder": path}
 
     @api.post("/local-model/cancel")
     async def local_cancel():

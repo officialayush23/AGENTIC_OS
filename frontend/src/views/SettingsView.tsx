@@ -305,6 +305,15 @@ function LocalModelCard() {
         right={st.provider ? <Seg compact label="How the local model is used" value={st.use as string}
           onChange={(v: string) => void act(() => put("/api/local-model/use", { use: v }), `Local model: ${USE_WORD[v]}`)}
           items={[{ id: "backup", label: "Backup" }, { id: "main", label: "Main" }, { id: "off", label: "Off" }]} /> : undefined} />
+      <div className="lm-folder">
+        <FolderOpen {...ICON_SM} />
+        <span className="m"><small className="muted">Models are saved in</small><b className="mono">{st.storage?.folder}</b></span>
+        {st.storage?.free_gb != null && <span className="tag">{st.storage.free_gb} GB free</span>}
+        <button className="ee-btn outline sm" disabled={job?.running} onClick={() => {
+          const path = prompt("Folder for local AI models (for example D:\\AI\\models):", st.storage?.folder ?? "");
+          if (path && path !== st.storage?.folder) void act(() => put("/api/local-model/folder", { path }), "Model folder changed");
+        }}>Change</button>
+      </div>
       <div className="lm-list">
         {st.catalog.map((m: any) => (
           <label key={m.id} className={`lm-item ${pick === m.id ? "on" : ""}`}>

@@ -331,3 +331,6 @@ i.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex
 .lm-item small { color: var(--ink-2); }
 .lm-job { margin-top: 12px; padding: 12px 14px; border-radius: 16px; background: var(--soft); display: grid; gap: 8px; }
 .bad-text { color: var(--fail-dot); }
+.lm-folder { display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 10px; border-radius: 16px; background: var(--soft); }
+.lm-folder .m { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.lm-folder .m b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }

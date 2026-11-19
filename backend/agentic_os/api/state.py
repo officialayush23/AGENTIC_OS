@@ -98,6 +98,7 @@ class AppState:
         self.secrets = secrets or build_secret_store(settings.secret_store_backend, settings.keyring_service,
                                                      settings.allow_insecure_keyring)
         self.providers = ProviderManager(self.repos.providers, self.secrets, settings)
+        self.providers.models_dir = self.models_dir()
         self.auth = LocalAuth(settings, self.repos.sessions)
         self.registry = build_default_registry()
         self.policy = PolicyEngine(self.registry)
@@ -219,6 +220,30 @@ class AppState:
         if not chain:
             return None
         return chain[0] if len(chain) == 1 else ChainProvider(chain)
+
+    def models_dir(self) -> str:
+        """Where local AI models live: the user's choice, else AGENTIC_OS_MODELS_DIR, else `models/` next to the app
+        (so a project on D: keeps its multi-GB downloads on D:), else the data folder."""
+        chosen = (self.repos.settings.get_all() or {}).get("local_models_dir") or os.environ.get("AGENTIC_OS_MODELS_DIR")
+        if chosen:
+            return str(chosen)
+        app_root = Path(__file__).resolve().parents[3]
+        if (app_root / "backend").is_dir() and os.access(str(app_root), os.W_OK):
+            return str(app_root / "models")
+        return os.path.join(str(self.settings.data_dir), "models")
+
+    def set_models_dir(self, path: str) -> str:
+        path = os.path.abspath(os.path.expanduser(path.strip()))
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".write-test")
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("ok")
+        os.remove(probe)
+        self.repos.settings.set("local_models_dir", path)
+        self.providers.models_dir = path
+        self.local_model.models_dir = path
+        self.providers._invalidate("local")
+        return path
 
     def _test_local(self) -> dict:
         """Connection test plus a sanity check that the output is real text (catches a model on the wrong device)."""
