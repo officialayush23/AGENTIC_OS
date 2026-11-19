@@ -90,7 +90,7 @@ def main(argv=None) -> int:
             # so the window this launcher opens pairs itself. It expires after one use or 10 minutes.
             threading.Timer(1.5, lambda: webbrowser.open(f"{url}/#pair={code}")).start()
     config = uvicorn.Config(app, host=settings.host, port=settings.port, log_level="warning", access_log=False,
-                            lifespan="on")
+                            lifespan="on", timeout_graceful_shutdown=3)
     server = uvicorn.Server(config)
     if args.token_stdin:
         # The desktop shell keeps our stdin open for its whole life. EOF means the shell exited or
@@ -110,7 +110,11 @@ def main(argv=None) -> int:
                 pass
 
         threading.Thread(target=watch_parent, name="aos-parent-watch", daemon=True).start()
-    server.run()
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass  # Ctrl+C: a normal stop, not an error worth a traceback
+    print("Agentic OS stopped.", flush=True)
     return 0
 
 

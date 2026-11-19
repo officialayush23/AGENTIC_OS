@@ -27,6 +27,13 @@ def _slug(name: str) -> str:
     return (s[:40] or "app")
 
 
+def _ps_str(v) -> str:
+    """PowerShell can serialise a string with its NoteProperties as {"value": ..., "PSPath": ...}."""
+    if isinstance(v, dict):
+        v = v.get("value", "")
+    return v if isinstance(v, str) else ""
+
+
 def _windows() -> List[dict]:
     roots = [os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), r"Microsoft\Windows\Start Menu\Programs"),
              os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs")]
@@ -44,7 +51,7 @@ def _windows() -> List[dict]:
         script = (
             "$s = New-Object -ComObject WScript.Shell; $r = @(); "
             f"foreach ($p in Get-Content -Encoding UTF8 -LiteralPath '{listfile}') {{ try {{ $l = $s.CreateShortcut($p); "
-            "$r += [pscustomobject]@{ lnk = $p; target = $l.TargetPath } } catch {} }; "
+            "$r += [pscustomobject]@{ lnk = [string]$p; target = [string]$l.TargetPath } } catch {} }; "
             "$r | ConvertTo-Json -Compress"
         )
         try:
@@ -62,9 +69,11 @@ def _windows() -> List[dict]:
             except OSError:
                 pass
         for d in data:
-            target = str(d.get("target") or "")
-            if target.lower().endswith(".exe") and os.path.isfile(target):
-                name = os.path.splitext(os.path.basename(d["lnk"]))[0]
+            if not isinstance(d, dict):
+                continue
+            target, lnk = _ps_str(d.get("target")), _ps_str(d.get("lnk"))
+            if lnk and target.lower().endswith(".exe") and os.path.isfile(target):
+                name = os.path.splitext(os.path.basename(lnk))[0]
                 out.append({"name": name, "path": target, "source": "Start menu"})
     try:
         import winreg  # type: ignore
