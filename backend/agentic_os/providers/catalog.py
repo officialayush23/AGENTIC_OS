@@ -46,6 +46,20 @@ PROVIDER_KINDS = {
         "notes": "Uses the google-genai SDK with response_mime_type=application/json; the schema is described in the "
                  "prompt and validated locally.",
     },
+    "local": {
+        "label": "Local model (this PC)",
+        "default_model": "qwen2.5-1.5b-gpu",
+        "example_models": ["qwen2.5-1.5b-gpu", "qwen2.5-3b-gpu", "qwen2.5-1.5b-cpu"],
+        "requires_base_url": False,
+        "requires_key": False,
+        "structured_modes": ["json_schema", "prompt"],
+        "default_mode": "json_schema",
+        "default_max_output_tokens": 1536,
+        "key_hint": "No key needed",
+        "docs_url": "https://onnxruntime.ai/docs/genai/",
+        "notes": "Runs a quantized Qwen2.5 with ONNX Runtime GenAI on your GPU (DirectML) or CPU. No internet, no quota. "
+                 "JSON output is constrained to the schema. Install it from Settings → Local AI model.",
+    },
     "openai_compatible": {
         "label": "OpenAI-compatible endpoint",
         "default_model": "",

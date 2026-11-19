@@ -119,6 +119,9 @@ class AppState:
         self.automation = AutomationStore(self.db)
         self.kg = KnowledgeGraph(self.db)
         self.kg_job = IndexJob()
+        from ..services.local_model import LocalModelService
+        self.local_model = LocalModelService(self.providers.models_dir, register=self._register_local,
+                                             self_test=self._test_local)
         self.kernel: Optional[Kernel] = None
         self.chat = ChatService(
             self.db, spawn=lambda *a, **k: self.kernel.spawn(*a, **k), task_view=lambda pid: self.kernel.proc(pid),
@@ -197,8 +200,52 @@ class AppState:
         return rec["id"]
 
     def llm_provider(self):
+        """The default model, with the local model (if installed) as a backup when it is unavailable."""
+        from ..providers.base import ProviderError
+        from ..providers.chain import ChainProvider
+        chain = []
         pid = self.default_provider_id()
-        return self.providers.build(pid) if pid else None
+        if pid:
+            try:
+                chain.append(self.providers.build(pid))
+            except ProviderError as exc:
+                log.warning("default provider %s unusable: %s", pid, exc)
+        local = self.providers.repo.get("local")
+        if local and local.get("enabled", True) and pid != "local" and self.user_settings().get("local_fallback", True):
+            try:
+                chain.append(self.providers.build("local"))
+            except ProviderError:
+                pass
+        if not chain:
+            return None
+        return chain[0] if len(chain) == 1 else ChainProvider(chain)
+
+    def _test_local(self) -> dict:
+        """Connection test plus a sanity check that the output is real text (catches a model on the wrong device)."""
+        r = self.providers.test("local")
+        if r.get("ok") and not r.get("structured_output_ok"):
+            r["ok"] = False
+        if r.get("ok"):
+            try:
+                text = self.providers.build("local").generate_text(
+                    "You are a test.", "Reply with exactly one word: ready", max_output_tokens=8).text
+                if "ready" not in text.lower():
+                    r["ok"] = False
+                    r["error"] = {"code": "LOCAL_OUTPUT_GARBLED", "message": f"the model's output looks wrong ({text[:40]!r}); "
+                                  "try the CPU model or update your GPU driver"}
+            except Exception as exc:  # noqa: BLE001
+                r["ok"] = False
+                r["error"] = {"code": "LOCAL_TEST_FAILED", "message": str(getattr(exc, "message", exc))}
+        if not r.get("ok") and not r.get("error"):
+            r["error"] = {"code": "LOCAL_TEST_FAILED", "message": "the model did not return the expected JSON"}
+        return r
+
+    def _register_local(self, model_id: str) -> None:
+        """Add (or point) the 'local' provider at an installed model; make it the default if there is none."""
+        self.providers.save("local", {"kind": "local", "display_name": "Local Qwen2.5 (this PC)", "model": model_id,
+                                      "timeout_s": 240, "max_output_tokens": 1536, "structured_mode": "json_schema"})
+        if self.default_provider_id() is None:
+            self.providers.set_default("local")
 
     # ------------------------------------------------------- knowledge graph
     def build_graph(self, *, deep: bool = False, path_prefix: Optional[str] = None, progress=None,
@@ -255,10 +302,9 @@ class AppState:
         mode = self.user_settings().get("planner_mode", "auto")
         if mode == "rules":
             return None
-        pid = self.default_provider_id()
-        if pid is None:
+        if self.llm_provider() is None:
             return None
-        return LLMPlanner(lambda: self.providers.build(pid))
+        return LLMPlanner(self.llm_provider)
 
     # ------------------------------------------------------------------ RAG
     def _make_embedder(self):

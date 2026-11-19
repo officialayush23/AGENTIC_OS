@@ -504,6 +504,8 @@ def create_app(settings: Settings, state: Optional[AppState] = None, *, start_ba
     register_chat(api, app, st, ApiError)
     from .routes_kernel import register as register_kernel
     register_kernel(api, app, st, ApiError)
+    from .routes_local import register as register_local
+    register_local(api, app, st, ApiError)
     app.include_router(api)
 
     # --------------------------------------------------------- static UI (browser mode)

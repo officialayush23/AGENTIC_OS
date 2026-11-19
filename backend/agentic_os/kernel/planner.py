@@ -77,6 +77,17 @@ class StaticPlanner(Planner):
         return {"plan": data, "usage": {"llm_calls": 0, "tokens": 0}}
 
 
+def compact_catalog(catalog: list) -> str:
+    """One line per tool: name(required, optional?): description. ~4x smaller, for small local models."""
+    lines = []
+    for t in catalog:
+        req = set(t.get("required") or [])
+        args = ", ".join(f"{k}{'' if k in req else '?'}" for k in (t.get("args") or {}))
+        desc = str(t.get("description") or "").split(". ")[0].rstrip(".")
+        lines.append(f"- {t['name']}({args}): {desc}")
+    return "\n".join(lines)
+
+
 class LLMPlanner(Planner):
     kind = "llm"
 
@@ -87,14 +98,35 @@ class LLMPlanner(Planner):
         import json
 
         provider = self.provider_factory()
-        parts = [f"User request:\n{request}", "Available tools:\n" + json.dumps(catalog, ensure_ascii=False)]
+        extra = []
         if clarification:
-            parts.append(f"Clarification. Question: {clarification.get('question')} Answer: {clarification.get('answer')}")
+            extra.append(f"Clarification. Question: {clarification.get('question')} Answer: {clarification.get('answer')}")
         if completed:
-            parts.append("Steps already completed (do not repeat them):\n" + json.dumps(completed, ensure_ascii=False)[:8000])
+            extra.append("Steps already completed (do not repeat them):\n" + json.dumps(completed, ensure_ascii=False)[:8000])
         if feedback:
-            parts.append(f"The previous plan failed. Fix this problem:\n{feedback}")
-        result = provider.generate_structured(SYSTEM_PROMPT, "\n\n".join(parts), PLAN_SCHEMA, "plan")
+            extra.append(f"The previous plan failed. Fix this problem:\n{feedback}")
+        full = "\n\n".join([f"User request:\n{request}", "Available tools:\n" + json.dumps(catalog, ensure_ascii=False), *extra])
+        # Small local models get a one-line-per-tool catalog and a schema that only allows real tool names.
+        compact = "\n\n".join([f"User request:\n{request}", "Available tools (name(args, ? = optional): purpose):\n"
+                                + compact_catalog(catalog), *extra,
+                                 "Use as few steps as possible (usually one or two). Only use a tool the request "
+                                 "clearly needs; never add extra steps such as screenshots, searches or replies."])
+        names = [t["name"] for t in catalog]
+        tight = {"type": "object", "required": ["goal", "steps"], "additionalProperties": False, "properties": {
+            "goal": {"type": "string"},
+            "needs_clarification": {"type": "boolean"},
+            "clarification_question": {"type": ["string", "null"]},
+            "steps": {"type": "array", "minItems": 1, "maxItems": 4, "items": {
+                "type": "object", "required": ["id", "title", "tool", "args"], "additionalProperties": False,
+                "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "tool": {"type": "string", "enum": names},
+                               "args": {"type": "object"}, "depends_on": {"type": "array", "items": {"type": "string"}}}}}}}
+        if getattr(provider, "providers", None) is not None:  # a ChainProvider: each link gets the variant it suits
+            result = provider.generate_structured(SYSTEM_PROMPT, full, PLAN_SCHEMA, "plan",
+                                                  local_variant=(compact, tight))
+        elif getattr(provider, "kind", "") == "local":
+            result = provider.generate_structured(SYSTEM_PROMPT, compact, tight, "plan")
+        else:
+            result = provider.generate_structured(SYSTEM_PROMPT, full, PLAN_SCHEMA, "plan")
         usage = getattr(result, "usage", None)
         tokens = int(getattr(usage, "total_tokens", 0) or 0) if usage is not None else 0
         return {"plan": result.data, "usage": {"llm_calls": 1, "tokens": tokens}}
@@ -346,6 +378,17 @@ def agentic_rules(r: str, offline: bool = True, ctx: str = "") -> Optional[dict]
                                                + "\n\nThe calendar invitation is attached.",
                                        "attachments": [{"$ref": "event.output.invite_file"}]}})
             return plan("Schedule a meeting", steps)
+    m = re.match(r"^(?:(?:what\s+)?i\s+mean(?:\s+is)?|please|can\s+you|could\s+you|pls)?[\s,]*"
+                 r"(?:create|creates|make|write|start|add|open|new)\s+(?:me\s+)?(?:a\s+|an\s+|some\s+)?(?:new\s+)?"
+                 r"(?:notes?|file\s+in\s+(?:my\s+)?notes|notes?\s+file)\b(?:\s+for\s+me)?"
+                 r"(?:\s+(?:for|about|on|regarding|titled|called|named)\s+(?:my\s+|the\s+)?(.+?))?"
+                 r"(?:\s*(?:,|and)\s+(?:add|write|put|include)\b.*)?[.!?\s]*$", r, re.I | re.S)
+    if m and offline:
+        topic = (m.group(1) or "").strip(" .\"'")
+        title = (topic[:1].upper() + topic[1:]) if topic else "New note"
+        body = (f"# {title}\n\n## Goal\n\n\n## Notes\n\n- \n\n## Next steps\n\n- [ ] \n")
+        return plan("Create a note", [{"id": "note", "title": f"Create note '{title}'", "tool": "create_note",
+                                       "args": {"title": title, "body": body}}])
     m = re.search(r"^(?:take\s+a\s+note|note(?:\s+down)?|jot(?:\s+down)?|new\s+note)\s*(?:titled\s+[\"'](.+?)[\"'])?\s*[:,-]?\s*(.+)$",
                   r, re.I | re.S)
     if m:
@@ -490,7 +533,7 @@ class HybridPlanner(Planner):
             out = llm.plan(request, catalog, feedback=feedback, completed=completed, clarification=clarification)
         except Exception as exc:  # noqa: BLE001
             # The model is down or overloaded (after its own retries): use an offline plan if one fits.
-            if getattr(exc, "retryable", False) and not feedback:
+            if getattr(exc, "code", None) is not None and not feedback:  # any provider error, quota included
                 hit = self.rules.match(request, offline=True)
                 if hit is not None and not hit.get("needs_clarification"):
                     hit = {**hit, "goal": f"{hit.get('goal')} (AI unavailable, offline plan)"}

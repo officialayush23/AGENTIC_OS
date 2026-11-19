@@ -211,3 +211,22 @@ and graph size, and connection status.
 - **Chat answers**: small talk and open questions go to the model when one is configured; "what is my focus"
   briefs calendar + unread mail + TODOs; answers get the local time and zone, reply in the user's language, and
   only the sources / emails the answer used are shown. Answers render as safe markdown.
+
+## 18. Local AI model and provider fallback (session 7)
+
+- **Local model** (`services/local_model.py`, `providers/local_onnx.py`, Settings → AI providers → Local AI model):
+  a quantized Qwen2.5 run with ONNX Runtime GenAI. Install = pip-install the runtime into the app's venv
+  (Windows: `onnxruntime-genai-directml`, which also runs CPU models; elsewhere `onnxruntime-genai`), download a
+  pinned build from Hugging Face (resumable, size-checked), register provider `local`, self-test.
+  Catalog: `amd/OGA_DML_Qwen_Qwen2.5-1.5B-Instruct` and `-3B-` (DirectML int4, any DX12 GPU) and
+  `elbruno/Qwen2.5-1.5B-Instruct-onnx` (CPU int4). On Python 3.10 pip resolves runtime 0.11.4, which reads these builds.
+- **Constrained JSON**: the local provider uses GenAI guidance (`set_guidance("json_schema", …)`), so plans are valid JSON
+  even from a 1.5B model. Small models get a compact one-line-per-tool catalog (~1k tokens instead of ~7k), a schema whose
+  `tool` field is an enum of real tool names, at most 4 steps, and an instruction not to pad the plan.
+- **Fallback chain** (`providers/chain.py`): `AppState.llm_provider()` returns [default provider, local]. Busy (503/504),
+  rate limit, quota, network, auth and missing-SDK errors fall through to the next provider; bad requests and filtered
+  output do not. The local model can also be the main model (Use: Main) or off.
+- **Self-test** after install: the JSON connection test plus a plain "reply with: ready" check, which catches a model
+  producing garbage on the wrong device.
+- **Offline notes**: "create a note / create notes for my science project / create a file in notes" has an offline plan
+  (a note with Goal / Notes / Next steps), used when no model can answer.

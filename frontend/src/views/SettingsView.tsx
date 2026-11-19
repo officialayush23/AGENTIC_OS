@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { FolderOpen, KeyRound, Mail, Plug, Trash2 } from "lucide-react";
+import { Cpu, Download, FolderOpen, KeyRound, Mail, Plug, Trash2 } from "lucide-react";
 import { del, get, isDesktop, post, put } from "../api";
 import { useLive } from "../App";
 import type { Provider } from "../types";
@@ -68,7 +68,7 @@ export function SettingsView() {
         </Card>
       </>}
       {tab === "email" && <EmailCard />}
-      {tab === "ai" && <ProvidersCard />}
+      {tab === "ai" && <><LocalModelCard /><ProvidersCard /></>}
       {tab === "knowledge" && <EmbedderCard current={s.rag_embedder ?? { kind: "local" }} kinds={kinds} onSave={(cfg) => save({ rag_embedder: cfg }, "Embedder saved. Re-index to use it.")} />}
       {tab === "apps" && <AppsCard />}
     </>
@@ -207,7 +207,7 @@ function ProvidersCard() {
             {Object.entries(kinds).map(([id, m]: any) => <option key={id} value={id}>{m.label}</option>)}</select></Field>
           <Field label="Model"><input className="input" value={form.model} placeholder={k.default_model || "model id"} onChange={(e) => setForm({ ...form, model: e.target.value })} /></Field>
           {k.requires_base_url && <Field label="Base URL"><input className="input" value={form.base_url} placeholder="https://host/v1" onChange={(e) => setForm({ ...form, base_url: e.target.value })} /></Field>}
-          <Field label="API key"><input className="input" type="password" value={form.api_key} placeholder={k.key_hint} onChange={(e) => setForm({ ...form, api_key: e.target.value })} /></Field>
+          {k.requires_key !== false && <Field label="API key"><input className="input" type="password" value={form.api_key} placeholder={k.key_hint} onChange={(e) => setForm({ ...form, api_key: e.target.value })} /></Field>}
           <Field label="Id (optional)"><input className="input" value={form.id} placeholder={form.kind.replace("_", "-")} onChange={(e) => setForm({ ...form, id: e.target.value })} /></Field>
         </div>
         <div className="row" style={{ marginTop: 14 }}><button className="ee-btn primary" onClick={add}>Add provider</button></div>
@@ -271,5 +271,75 @@ function AppsCard() {
         </details>
       </Card>
     </>
+  );
+}
+
+const USE_WORD: Record<string, string> = { backup: "Backup", main: "Main model", off: "Off" };
+
+function LocalModelCard() {
+  const { refresh } = useLive();
+  const toast = useToast();
+  const [st, setSt] = useState<any>(null);
+  const [pick, setPick] = useState<string>("");
+  const load = useCallback(async () => { const r = await get<any>("/api/local-model"); setSt(r); setPick((p) => p || r.recommended); }, []);
+  useEffect(() => { void load(); }, [load]);
+  const job = st?.job;
+  useEffect(() => {
+    if (!job?.running) return;
+    const t = setInterval(() => void load(), 1500);
+    return () => clearInterval(t);
+  }, [job?.running, load]);
+  useEffect(() => { if (job && !job.running) refresh(); }, [job?.running]); // eslint-disable-line react-hooks/exhaustive-deps
+  const act = async (fn: () => Promise<any>, ok?: string) => {
+    try { await fn(); if (ok) toast({ title: ok }); await load(); refresh(); }
+    catch (e: any) { toast({ title: "That didn't work", text: e.message, bad: true }); }
+  };
+  if (!st) return null;
+  const installed: string[] = st.installed ?? [];
+  const active = st.provider?.model;
+  const test = st.provider?.last_test;
+  return (
+    <Card>
+      <CardHead title="Local AI model (runs on this PC)"
+        sub="A quantized Qwen2.5 on your GPU (DirectML) or CPU with ONNX Runtime. Works offline, no quota. Used as a backup when the online model is busy or out of quota, or as the main model."
+        right={st.provider ? <Seg compact label="How the local model is used" value={st.use as string}
+          onChange={(v: string) => void act(() => put("/api/local-model/use", { use: v }), `Local model: ${USE_WORD[v]}`)}
+          items={[{ id: "backup", label: "Backup" }, { id: "main", label: "Main" }, { id: "off", label: "Off" }]} /> : undefined} />
+      <div className="lm-list">
+        {st.catalog.map((m: any) => (
+          <label key={m.id} className={`lm-item ${pick === m.id ? "on" : ""}`}>
+            <input type="radio" name="lm" checked={pick === m.id} onChange={() => setPick(m.id)} />
+            <span className="m"><b>{m.label}</b>
+              <small>{m.note} · {(m.size_mb / 1024).toFixed(1)} GB download{m.vram_gb ? ` · ~${m.vram_gb} GB GPU memory` : ""}</small></span>
+            {m.id === st.recommended && <span className="tag">Recommended here</span>}
+            {installed.includes(m.id) && <Chip tone={m.id === active ? "pass" : "nc"}>{m.id === active ? "In use" : "Downloaded"}</Chip>}
+            {installed.includes(m.id) && <button className="ee-btn ghost round sm" aria-label={`Delete ${m.label}`}
+              onClick={(e) => { e.preventDefault(); if (confirm("Delete this model's files?")) void act(() => del(`/api/local-model/${m.id}`), "Deleted"); }}><Trash2 {...ICON_SM} /></button>}
+          </label>
+        ))}
+      </div>
+      {job && (job.running || job.error || job.stage === "done") && (
+        <div className="lm-job">
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <span>{job.error ? <b className="bad-text">Failed: {job.error}</b> : job.message || job.stage}</span>
+            {job.total_mb > 0 && <span className="mono">{job.done_mb} / {job.total_mb} MB</span>}
+          </div>
+          {job.running && <div className="kmeter"><div className="bar"><i style={{ width: `${job.percent ?? 5}%`, background: "var(--ink)" }} /></div></div>}
+          {job.result && <small className="muted">Self-test: {job.result.ok ? `passed in ${(job.result.latency_ms / 1000).toFixed(1)} s` : (job.result.error?.message ?? "failed")}</small>}
+        </div>
+      )}
+      <div className="row" style={{ marginTop: 14, gap: 8, flexWrap: "wrap" }}>
+        {job?.running
+          ? <button className="ee-btn outline" onClick={() => act(() => post("/api/local-model/cancel"))}>Cancel</button>
+          : <button className="ee-btn primary" disabled={!pick} onClick={() => act(() => post("/api/local-model/install", { model: pick }))}>
+              <Download {...ICON_SM} /> {installed.includes(pick) ? (pick === active ? "Re-check" : "Use this model") : "Install"}</button>}
+        {st.provider && <button className="ee-btn outline" onClick={() => act(async () => {
+          const r: any = await post("/api/local-model/test");
+          if (!r.ok) throw new Error(r.error?.message ?? "Test failed");
+        }, "Local model works")}><Cpu {...ICON_SM} /> Test</button>}
+        <span className="muted">Runtime: {st.runtime.installed ? `${st.runtime.package} ${st.runtime.version ?? ""}` : "not installed yet (installed with the model)"}
+          {test ? ` · last test ${test.ok ? "passed" : "failed"}` : ""}</span>
+      </div>
+    </Card>
   );
 }

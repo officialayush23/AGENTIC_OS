@@ -77,6 +77,8 @@ def validate_api_key(value: str) -> str:
 
 class ProviderManager:
     def __init__(self, repo: ProviderRepo, secrets: SecretStore, settings: Settings):
+        import os as _os
+        self.models_dir = _os.path.join(str(settings.data_dir), "models")
         self.repo = repo
         self.secrets = secrets
         self.settings = settings
@@ -100,7 +102,7 @@ class ProviderManager:
 
     def credential_status(self, provider_id: str, kind: str) -> dict:
         store = self.secrets.status()
-        if kind == "fake":
+        if kind in ("fake", "local"):
             return {"stored": True, "required": False, "store_available": store.get("available", False),
                     "backend": store.get("backend"), "error": None}
         stored, error = False, None
@@ -309,6 +311,9 @@ class ProviderManager:
                 raise ProviderError(ErrorCode.NOT_CONFIGURED, "the fake provider is disabled")
             from .fake_provider import FakeProvider
             provider: LLMProvider = FakeProvider(cfg)
+        elif cfg.kind == "local":
+            from .local_onnx import LocalOnnxProvider
+            provider = LocalOnnxProvider(cfg, self.models_dir)
         else:
             try:
                 key = self.secrets.get(provider_secret_name(provider_id))

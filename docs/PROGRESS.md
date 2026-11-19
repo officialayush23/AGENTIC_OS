@@ -211,6 +211,15 @@ edit made by the user while a task had staged one was reported as a conflict ins
 - Kernel monitor screen with six one-click OS demos; `docs/DEMO.md` is the demo script.
 - Verified crash recovery by `kill -9` of the server mid-step: the process resumed and completed.
 
+### Session 7 — 2026-11-19: a model that always answers
+
+- Gemini returned 503/504 and then a free-tier quota error (20 requests/day for that model), so every request failed.
+- Added a local Qwen2.5 (ONNX Runtime GenAI, int4) with one-click install, GPU (DirectML) or CPU, used as a backup or
+  the main model; a provider chain falls back to it; the planner falls back to offline rules on any provider error.
+- Verified here on CPU: real install from Hugging Face through the app (1.85 GB), self-test, and a real task
+  ("write a short note about photosynthesis…") planned by the local model and staged as ~/Notes/photosynthesis.md.
+  DirectML could not be tested here (Linux).
+
 ## How to continue
 
 1. `start.bat` (installs, tests, opens the app). Record the Windows results in `docs/TESTING.md`.
