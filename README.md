@@ -107,3 +107,5 @@ Pause / Resume / Cancel map to the STOP / CONT / TERM signals. Everything is in 
 - The model never chooses capabilities, policy outcomes or commits. It can only propose a plan.
 - Userspace limits: tools are first-party code reviewed to go through the kernel's resolver; there is no
   OS-level sandbox in v0.1. See `docs/KERNEL.md` §9.
+
+**Demo:** open *Kernel monitor* in the app and follow [docs/DEMO.md](docs/DEMO.md) to show each OS mechanism live.

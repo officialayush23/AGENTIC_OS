@@ -194,3 +194,20 @@ filter by kind, evidence list).
 `GET /api/dashboard` aggregates all processes: KPIs, tasks per day by outcome with automation runs, most
 used tools, where tasks came from, recent tasks, upcoming events (local + Google), unread mail, knowledge
 and graph size, and connection status.
+
+## 17. Kernel monitor, demos and resilience (session 6)
+
+- **Kernel monitor** (`api/routes_kernel.py`, `views/KernelView.tsx`): `GET /api/kernel` returns the process table
+  (`ps`), the run queue per level, each process's capability table and budget, the last journal transactions and
+  the kernel log. `POST /api/kernel/demo/{transaction|fork|signals|capability|rlimit|scheduler}` spawns a scripted
+  process (a preset plan, still validated and policy-checked) that exercises one mechanism. See `docs/DEMO.md`.
+- **`wait` tool**: a cooperative sleep (checks TERM/KILL and the deadline every 100 ms) used by the demos.
+- **Provider resilience** (`providers/base.py`): transient errors (429, 5xx, timeouts) are retried with backoff,
+  then `FALLBACK_MODELS` are tried (Gemini: `gemini-flash-latest`, `gemini-3.6-flash`). If the model is still
+  unavailable, the hybrid planner uses an offline rules plan when one fits.
+- **Email search**: commas / "or" separate alternatives (`hackathon, voyage hack`); plurals and joined spellings
+  (`voyagehack`) are added; Gmail IMAP uses `X-GM-RAW`, the Gmail API uses `OR`. HTML-only mail is converted to
+  text for snippets. "emails related to X" and follow-ups like "which are of X" plan an `email_search`.
+- **Chat answers**: small talk and open questions go to the model when one is configured; "what is my focus"
+  briefs calendar + unread mail + TODOs; answers get the local time and zone, reply in the user's language, and
+  only the sources / emails the answer used are shown. Answers render as safe markdown.

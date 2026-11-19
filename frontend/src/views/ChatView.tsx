@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, Bot, Mic, MicOff, Plus, Square, Trash2, Volume2, VolumeX } from "lucide-react";
 import { api, del, get, post } from "../api";
 import { useLive } from "../App";
+import { MiniMarkdown, plainText } from "../components/MiniMarkdown";
 import { ResultCards } from "../components/ResultCards";
 import { speak, useVoice } from "../lib/voice";
 import type { Task } from "../types";
@@ -90,7 +91,7 @@ export function ChatView() {
     const ago_s = (Date.now() - Date.parse(m.created_at)) / 1000;
     if (ago_s > 120) return;
     if (aloud && (m.meta.voice || lastVoice.current)) {
-      speak(m.text, true);
+      speak(plainText(m.text), true);
       if (handsFree && voice.mode !== "none") {
         const wait = () => { if (window.speechSynthesis?.speaking) setTimeout(wait, 300); else void voice.start(); };
         setTimeout(wait, 600);
@@ -201,7 +202,7 @@ function AssistantMsg({ m, onChanged }: { m: Msg; onChanged: () => void }) {
         {m.pid && <button className="ee-btn ghost sm" onClick={() => nav("tasks", m.pid!)}>Open task</button>}
       </div>
       {running && task && !task.pending_user ? <p className="bot-text muted">{s?.next ?? "Working on it…"}</p>
-        : !task?.pending_user && <p className="bot-text">{m.text}</p>}
+        : !task?.pending_user && <MiniMarkdown className="bot-text" text={m.text} />}
       {task?.pending_user && <Decision pending={task.pending_user} task={task} act={act} />}
       {showPlan && task && <div style={{ marginTop: 10 }}><PlanView task={task} /></div>}
       <ResultCards cards={m.meta?.cards ?? []} />

@@ -7,7 +7,8 @@ import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Iterator, List, Optional
+import logging
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from ..security.redaction import redactor
 from ..util import truncate_text
@@ -33,6 +34,8 @@ class ErrorCode:
     BUDGET_EXCEEDED = "LLM_BUDGET_EXCEEDED"
     UNKNOWN = "PROVIDER_ERROR"
 
+
+log = logging.getLogger(__name__)
 
 RETRYABLE_CODES = {ErrorCode.RATE_LIMITED, ErrorCode.TIMEOUT, ErrorCode.CONNECTION_ERROR, ErrorCode.SERVER_ERROR}
 
@@ -294,6 +297,41 @@ class LLMProvider(ABC):
         result = self._call(system, user, schema=None, schema_name="text", mode="text", max_output_tokens=max_output_tokens)
         yield result.text
 
+    # -------------------------------------------------------------- resilience
+    #: Models to try, in order, when the configured one is overloaded (503) or times out (504).
+    FALLBACK_MODELS: Tuple[str, ...] = ()
+    RETRY_DELAYS_S: Tuple[float, ...] = (1.5, 4.0)
+
+    def _call_resilient(self, *args: Any, **kwargs: Any) -> "LLMResult":
+        """`_call` with retries for transient errors (429/5xx/timeouts), then fallback models.
+
+        Busy-server errors are common with hosted models; one blip should not fail a whole task."""
+        import copy
+        import dataclasses
+        models = [self.config.model] + [m for m in self.FALLBACK_MODELS if m and m != self.config.model]
+        last: Optional[ProviderError] = None
+        for i, model in enumerate(models):
+            target = self
+            if i:
+                target = copy.copy(self)
+                target.config = dataclasses.replace(self.config, model=model)
+                log.warning("%s: %s is unavailable (%s); trying %s", self.kind, models[0], last.code if last else "?", model)
+            delays = self.RETRY_DELAYS_S if i == 0 else self.RETRY_DELAYS_S[:1]
+            for attempt in range(len(delays) + 1):
+                try:
+                    return target._call(*args, **kwargs)
+                except ProviderError as exc:
+                    if not exc.retryable:
+                        raise
+                    last = exc
+                    if attempt < len(delays):
+                        wait = exc.retry_after_s if exc.retry_after_s else delays[attempt]
+                        time.sleep(min(float(wait), 15.0))
+            if last is None or last.code not in (ErrorCode.SERVER_ERROR, ErrorCode.TIMEOUT):
+                break
+        assert last is not None
+        raise last
+
     # -------------------------------------------------------------- helpers
     def resolve_mode(self, requested: Optional[str] = None) -> str:
         caps = self.capabilities()
@@ -304,7 +342,7 @@ class LLMProvider(ABC):
 
     def generate_text(self, system: str, user: str, *, max_output_tokens: Optional[int] = None) -> LLMResult:
         started = time.monotonic()
-        result = self._call(
+        result = self._call_resilient(
             system, user, schema=None, schema_name="text", mode="text",
             max_output_tokens=int(max_output_tokens or self.config.max_output_tokens),
         )
@@ -324,7 +362,7 @@ class LLMProvider(ABC):
         mode = self.resolve_mode()
         clean_schema = inline_schema_refs(schema)
         started = time.monotonic()
-        result = self._call(
+        result = self._call_resilient(
             system, user, schema=clean_schema, schema_name=schema_name, mode=mode,
             max_output_tokens=int(max_output_tokens or self.config.max_output_tokens),
         )

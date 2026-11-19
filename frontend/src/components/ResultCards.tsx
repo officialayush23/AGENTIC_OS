@@ -60,8 +60,8 @@ export function ResultCards({ cards }: { cards: any[] }) {
             );
           case "hits":
             return (
-              <div key={i} className="rc"><Head icon={<Search {...ICON_SM} />} title={`${c.items.length} passage${c.items.length === 1 ? "" : "s"}`} />
-                {c.items.slice(0, 3).map((h: any, j: number) => (
+              <div key={i} className="rc"><Head icon={<Search {...ICON_SM} />} title={`Source${c.items.length === 1 ? "" : "s"} used (${c.items.length})`} />
+                {c.items.map((h: any, j: number) => (
                   <div key={j} style={{ marginTop: 8 }}><div className="mono muted">{h.path}:{h.start_line}–{h.end_line}</div>
                     <p className="rc-body">{(h.text || "").slice(0, 400)}</p></div>))}</div>
             );

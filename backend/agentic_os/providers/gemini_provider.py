@@ -16,6 +16,8 @@ _BLOCKED = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION", "
 
 class GeminiProvider(LLMProvider):
     kind = "gemini"
+    # Tried in order when the chosen model is overloaded (503) or times out (504).
+    FALLBACK_MODELS = ("gemini-flash-latest", "gemini-3.6-flash")
 
     def __init__(self, config: ProviderConfig, api_key: Optional[str]):
         super().__init__(config, api_key)

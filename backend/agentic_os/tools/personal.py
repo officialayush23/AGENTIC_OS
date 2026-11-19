@@ -310,7 +310,9 @@ def _email_read(ctx: ToolContext, args: EmailReadInput) -> dict:
 
 
 class EmailSearchInput(_In):
-    query: str = Field(min_length=1, max_length=300)
+    query: str = Field(min_length=1, max_length=300,
+                       description="Words to find. Separate alternatives with commas (any may match), e.g. "
+                                   "'hackathon, voyage hack'; words in one alternative must all appear.")
     folder: str = Field("INBOX", max_length=200)
     limit: int = Field(20, ge=1, le=100)
 
@@ -498,7 +500,7 @@ PERSONAL_TOOLS = [
           examples=({"unread_only": True, "limit": 10},)),
     _spec("email_read", "Read one email message (body text and attachments list).", EmailReadInput, _email_read,
           caps=("mail.read",), risk=RiskLevel.READ_ONLY, mutates=False, category="email", audit=("id",)),
-    _spec("email_search", "Search mail by words in the subject, sender or body.", EmailSearchInput, _email_search,
+    _spec("email_search", "Search mail by topic, sender or words in the subject or body (commas mean OR).", EmailSearchInput, _email_search,
           caps=("mail.read",), risk=RiskLevel.READ_ONLY, mutates=False, category="email", audit=("query",)),
     _spec("email_draft", "Save an email draft to ~/Mail/Outbox without sending it.", EmailDraftInput,
           _draft_handler, caps=("workspace.write",), risk=RiskLevel.REVERSIBLE_WRITE, mutates=True,

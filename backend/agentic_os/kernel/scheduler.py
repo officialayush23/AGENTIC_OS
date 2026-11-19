@@ -48,6 +48,11 @@ class RunQueue:
     def __len__(self) -> int:
         return len(self._queued)
 
+    def snapshot(self) -> Dict[str, list]:
+        """Queue contents per level, front first (for the kernel monitor)."""
+        names = {p.value: p.name.lower() for p in Priority}
+        return {names[level]: list(q) for level, q in sorted(self._levels.items())}
+
     def __contains__(self, pid: str) -> bool:
         return pid in self._queued
 

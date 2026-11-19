@@ -242,7 +242,9 @@ class GmailTransport:
 
     def search(self, query: str, folder: str = "INBOX", limit: int = 20) -> List[dict]:
         out = []
-        for mid in self._ids(folder, limit, query):
+        from .mail import gmail_query, search_alternatives
+        alts = search_alternatives(query)
+        for mid in self._ids(folder, limit, gmail_query(alts) if alts else query):
             msg, seen = self._raw(mid)
             out.append(summarize(mid, msg, folder, seen))
         return out

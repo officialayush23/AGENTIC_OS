@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bell, BookOpen, CalendarDays, CircleHelp, Globe, Inbox, LayoutDashboard, ListChecks, MessageCircle, Moon, Network,
+  Bell, BookOpen, Cpu, CalendarDays, CircleHelp, Globe, Inbox, LayoutDashboard, ListChecks, MessageCircle, Moon, Network,
   NotebookPen, Plug, Search, Settings, Sun, Workflow,
 } from "lucide-react";
 import { ApiError, connect, get, post, subscribe, type Connection } from "./api";
@@ -9,6 +9,7 @@ import { ICON, ToastHost, taskStatus } from "./ui";
 import { PairView } from "./views/PairView";
 import { ChatView } from "./views/ChatView";
 import { DashboardView } from "./views/DashboardView";
+import { KernelView } from "./views/KernelView";
 import { GraphView } from "./views/GraphView";
 import { ConnectionsView } from "./views/ConnectionsView";
 import { TasksView } from "./views/TasksView";
@@ -21,7 +22,7 @@ import { KnowledgeView } from "./views/KnowledgeView";
 import { SettingsView } from "./views/SettingsView";
 
 export type View = "chat" | "dashboard" | "tasks" | "inbox" | "calendar" | "notes" | "automations" | "browser" | "knowledge"
-  | "graph" | "connections" | "settings";
+  | "graph" | "connections" | "kernel" | "settings";
 
 const NAV: ({ id: View; label: string; icon: any } | { sep: string })[] = [
   { id: "chat", label: "Conversation", icon: MessageCircle },
@@ -37,11 +38,12 @@ const NAV: ({ id: View; label: string; icon: any } | { sep: string })[] = [
   { id: "knowledge", label: "Knowledge", icon: BookOpen },
   { id: "graph", label: "Knowledge graph", icon: Network },
   { sep: "--ws-system" },
+  { id: "kernel", label: "Kernel monitor", icon: Cpu },
   { id: "connections", label: "Connections", icon: Plug },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 const TITLES: Record<View, string> = {
-  chat: "Conversation", dashboard: "Dashboard", graph: "Knowledge graph", connections: "Connections", tasks: "Tasks", inbox: "Inbox", calendar: "Calendar", notes: "Notes", automations: "Automations",
+  chat: "Conversation", dashboard: "Dashboard", graph: "Knowledge graph", connections: "Connections", kernel: "Kernel monitor", tasks: "Tasks", inbox: "Inbox", calendar: "Calendar", notes: "Notes", automations: "Automations",
   browser: "Browser", knowledge: "Knowledge", settings: "Settings",
 };
 
@@ -233,6 +235,7 @@ function Shell() {
             <main className={`content ${view === "chat" ? "content-chat" : ""}`} key={view}>
               {view === "chat" && <ChatView />}
               {view === "dashboard" && <DashboardView />}
+              {view === "kernel" && <KernelView />}
               {view === "graph" && <GraphView />}
               {view === "connections" && <ConnectionsView />}
               {view === "tasks" && <TasksView />}

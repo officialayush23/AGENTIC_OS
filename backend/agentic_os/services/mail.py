@@ -59,23 +59,72 @@ def split_addresses(value: Any) -> List[str]:
     return out
 
 
+def html_to_text(html: str) -> str:
+    """Readable text from an HTML email: drop head/style/script and comments, keep words."""
+    import html as _html
+    t = re.sub(r"(?is)<(head|style|script|title)\b.*?</\1\s*>", " ", html)
+    t = re.sub(r"(?s)<!--.*?-->", " ", t)
+    t = re.sub(r"(?i)<br\s*/?>|</(p|div|tr|li|h\d)>", "\n", t)
+    t = re.sub(r"<[^>]+>", " ", t)
+    t = _html.unescape(t).replace("\u200c", "").replace("\xa0", " ")
+    return re.sub(r"[ \t]+", " ", re.sub(r"\n\s*\n+", "\n", t)).strip()
+
+
+def _part_text(part: email.message.Message) -> str:
+    try:
+        return str(part.get_content())
+    except Exception:  # noqa: BLE001
+        return (part.get_payload(decode=True) or b"").decode("utf-8", "replace")
+
+
 def _text_of(msg: email.message.Message) -> str:
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_type() == "text/plain" and not part.get_filename():
-                try:
-                    return part.get_content()
-                except Exception:  # noqa: BLE001
-                    return (part.get_payload(decode=True) or b"").decode("utf-8", "replace")
+                return _part_text(part)
         for part in msg.walk():
             if part.get_content_type() == "text/html":
-                html = (part.get_payload(decode=True) or b"").decode("utf-8", "replace")
-                return re.sub(r"<[^>]+>", " ", html)
+                return html_to_text(_part_text(part))
         return ""
-    try:
-        return msg.get_content()
-    except Exception:  # noqa: BLE001
-        return (msg.get_payload(decode=True) or b"").decode("utf-8", "replace")
+    body = _part_text(msg)
+    if msg.get_content_type() == "text/html" or re.match(r"\s*(<!doctype|<html)", body, re.I):
+        return html_to_text(body)
+    return body
+
+
+# ---------------------------------------------------------------- searching
+_SEARCH_STOP = {"the", "a", "an", "my", "me", "any", "all", "emails", "email", "mails", "mail", "messages", "message",
+                "related", "to", "about", "regarding", "of", "in", "inbox"}
+
+
+def _stem(w: str) -> str:
+    return w[:-1] if len(w) > 4 and w.endswith("s") and not w.endswith("ss") else w
+
+
+def search_alternatives(query: str) -> List[List[str]]:
+    """'hackathons, voyage hack' -> [['hackathons'], ['hackathon'], ['voyage', 'hack'], ['voyagehack']].
+
+    Commas, semicolons, '|' and the word 'or' separate alternatives (any may match); words inside one
+    alternative must all match. Plurals and joined spellings are added as extra alternatives."""
+    out: List[List[str]] = []
+    for part in re.split(r"\s*(?:,|;|\||\bor\b)\s*", query or "", flags=re.I):
+        words = [w for w in re.findall(r"[\w@.+\-]+", part.lower()) if w not in _SEARCH_STOP]
+        if not words:
+            continue
+        for alt in (words, [_stem(w) for w in words], ["".join(words)] if len(words) > 1 else None):
+            if alt and alt not in out:
+                out.append(alt)
+    return out
+
+
+def search_matches(hay: str, alts: List[List[str]]) -> bool:
+    hay = hay.lower()
+    return any(all(w in hay for w in alt) for alt in alts)
+
+
+def gmail_query(alts: List[List[str]]) -> str:
+    """Gmail search syntax: (a b) OR (c)."""
+    return " OR ".join("(" + " ".join(alt) + ")" if len(alt) > 1 else alt[0] for alt in alts)
 
 
 def summarize(uid: str, msg: email.message.Message, folder: str, seen: bool = True) -> dict:
@@ -206,12 +255,12 @@ class LocalMailbox:
                 os.replace(p, p.with_name(p.name.replace(".new", "")))
 
     def search(self, query: str, folder: str = "INBOX", limit: int = 20) -> List[dict]:
-        q = query.lower()
+        alts = search_alternatives(query)
         out = []
         for p in self._files(folder):
             msg = self._load(p)
-            hay = " ".join([str(msg.get("Subject") or ""), str(msg.get("From") or ""), _text_of(msg)]).lower()
-            if all(term in hay for term in q.split()):
+            hay = " ".join([str(msg.get("Subject") or ""), str(msg.get("From") or ""), _text_of(msg)])
+            if search_matches(hay, alts):
                 out.append(summarize(self._uid(p), msg, folder, ".new" not in p.name))
                 if len(out) >= limit:
                     break
@@ -327,9 +376,20 @@ class ImapSmtpTransport:
         conn = self._imap()
         try:
             conn.select(self._q(folder), readonly=True)
-            safe = query.replace('"', "")
-            _, data = conn.uid("search", "CHARSET", "UTF-8", "TEXT", f'"{safe}"')
-            uids = (data[0] or b"").split()[-limit:][::-1]
+            alts = search_alternatives(query) or [[query.replace('"', "")]]
+            found: set = set()
+            if "gmail" in str(self.cfg.get("imap_host") or "").lower():
+                # Gmail's own search syntax (OR, word matching) over IMAP.
+                _, data = conn.uid("search", None, "X-GM-RAW", '"' + gmail_query(alts).replace('"', "") + '"')
+                found.update((data[0] or b"").split())
+            else:
+                for alt in alts:  # one IMAP search per alternative, words ANDed, results unioned
+                    crit: List[str] = []
+                    for w in alt:
+                        crit += ["TEXT", '"' + w.replace('"', "") + '"']
+                    _, data = conn.uid("search", "CHARSET", "UTF-8", *crit)
+                    found.update((data[0] or b"").split())
+            uids = sorted(found, key=lambda u: int(u))[-limit:][::-1]
             return self._fetch_many(conn, folder, uids)
         finally:
             conn.logout()

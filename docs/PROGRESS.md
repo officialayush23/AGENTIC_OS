@@ -202,6 +202,15 @@ edit made by the user while a task had staged one was reported as a conflict ins
 - Migration 5. 225 backend tests pass; frontend typecheck/tests/build pass; screens checked in headless Chrome.
 - Not verified here: a real Google or Notion account (tested against fake HTTP servers), microphone input.
 
+### Session 6 — 2026-11-19: answers that fit the question, and the OS made visible
+
+- Fixed Windows app discovery (PowerShell returned paths as objects) and quiet Ctrl+C shutdown.
+- Chat: focus/briefing questions, small talk to the model, local-time answers, only used sources shown, markdown.
+- Email: topic search with alternatives ("hackathon, voyage hack"), follow-up narrowing, HTML snippets as text.
+- Providers: retries + fallback models for 503/504; planner degrades to offline rules.
+- Kernel monitor screen with six one-click OS demos; `docs/DEMO.md` is the demo script.
+- Verified crash recovery by `kill -9` of the server mid-step: the process resumed and completed.
+
 ## How to continue
 
 1. `start.bat` (installs, tests, opens the app). Record the Windows results in `docs/TESTING.md`.

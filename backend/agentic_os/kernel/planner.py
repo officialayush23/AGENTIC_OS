@@ -43,7 +43,13 @@ SYSTEM_PROMPT = (
     "You are the planner of Agentic OS, a desktop agent kernel. Turn the user's request into a short plan of "
     "tool calls using ONLY the tools listed. Every write is staged in a transaction the user reviews before "
     "anything changes on disk, so do not ask for confirmation steps. Never invent tools. Use workspace-relative "
-    "paths. If the request is ambiguous, set needs_clarification=true and ask one question. Respond with JSON only."
+    "paths. If the request is ambiguous, set needs_clarification=true and ask one question. Respond with JSON only.\n"
+    "- Small talk, greetings or thanks (in any language, e.g. 'hi', 'bol bhai', 'kya haal hai'): one respond_to_user "
+    "step with a short, friendly reply in the user's own language and tone. Do not search files for small talk.\n"
+    "- Questions about the user's day, focus, priorities, pending work or 'what should I do': list the calendar "
+    "(calendar_list, 7 days), unread email (email_list) and search notes for TODOs and next steps (search_knowledge). "
+    "Do not add a respond_to_user step after tools that fetch data; the answer is written from their results.\n"
+    "- Text after 'Conversation so far' is earlier chat for context: use it to resolve 'it', 'that', follow-ups."
 )
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,48}$")
@@ -246,14 +252,33 @@ def parse_when(text: str, now: Optional["datetime"] = None) -> Optional[str]:
     return day.replace(hour=hour, minute=minute).strftime("%Y-%m-%dT%H:%M")
 
 
-def agentic_rules(r: str) -> Optional[dict]:
+_FILLER = re.compile(r"\b(especially|particularly|specifically|mainly|mostly|including|like|and also|as well as|and|or)\b", re.I)
+
+
+def _email_topic(text: str) -> str:
+    """'HACKATHONS , ESPECIALLY VOYAGE HACK' -> 'HACKATHONS, VOYAGE HACK' (commas = alternatives)."""
+    t = re.sub(r"^(?:(?:the|of|about|for|on|regarding|related to|from)\s+)+", "", text.strip(), flags=re.I)
+    t = _FILLER.sub(",", t.strip(" ?.!\"'"))
+    parts = [x.strip() for x in t.split(",") if x.strip()]
+    return ", ".join(dict.fromkeys(parts))
+
+
+def agentic_rules(r: str, offline: bool = True, ctx: str = "") -> Optional[dict]:
     """Offline plans for email, calendar, notes, the web and the knowledge graph."""
     low = r.lower()
     plan = lambda goal, steps: {"goal": goal, "steps": steps, "needs_clarification": False}  # noqa: E731
-    if re.fullmatch(r"(hi|hello|hey|yo|good (morning|afternoon|evening)|thanks|thank you)[!. ]*", low.strip()):
+    if offline and re.fullmatch(r"(hi+|hello|hey+|yo|sup|what'?s up|good (morning|afternoon|evening)|thanks|thank you|namaste|"
+                                r"bol bhai|bolo|kaise ho|kya haal( hai)?|hello bhai|hi bhai)[!.? ]*", low.strip()):
         return plan("Say hello", [{"id": "hi", "title": "Reply", "tool": "respond_to_user", "args": {
             "text": "Hi! Tell me what to do: check your email, schedule a meeting, take a note, research a page, "
                     "or build a knowledge graph of your files."}}])
+    if re.search(r"\b(focus|priorit(y|ies|ise|ize)|on my plate|pending|what should i (do|work on)|my day|plan for today|"
+                 r"what'?s next|kya karna)\b", low):
+        return plan("Brief you on your day", [
+            {"id": "cal", "title": "Upcoming events", "tool": "calendar_list", "args": {"days": 7}},
+            {"id": "mail", "title": "Unread mail", "tool": "email_list", "args": {"unread_only": True, "limit": 10}},
+            {"id": "todo", "title": "Open TODOs in your notes", "tool": "search_knowledge",
+             "args": {"query": "TODO next steps priorities deadline focus"}}])
     if re.search(r"\b(build|create|make|update|refresh|generate)\b.*\b(knowledge graph|graph|mind ?map)\b", low):
         return plan("Build the knowledge graph", [{"id": "kg", "title": "Build the knowledge graph",
                                                    "tool": "build_knowledge_graph", "args": {"deep": "deep" in low}}])
@@ -264,9 +289,22 @@ def agentic_rules(r: str) -> Optional[dict]:
             {"id": "kb", "title": "Search the knowledge base", "tool": "search_knowledge", "args": {"query": m.group(1)}}])
     m = re.search(r"(?:search|find|look)\s+(?:in\s+)?(?:my\s+)?(?:e-?mails?|mail|inbox)\s+(?:for\s+)?(.+)$", r, re.I)
     if m:
-        q = m.group(1).strip().strip("\"'")
+        q = _email_topic(m.group(1)) or m.group(1).strip().strip("\"'")
         return plan("Search email", [{"id": "find", "title": f"Search mail for '{q}'", "tool": "email_search",
                                       "args": {"query": q[:200]}}])
+    m = re.search(r"\b(?:e-?mails?|mails?|inbox|messages)\b\s*(?:that are\s+|which are\s+)?(?:related to|about|regarding|on|from|"
+                  r"for|mentioning|containing|of)\s+(.+)$", r, re.I | re.S)
+    if m and not re.search(_EMAIL, m.group(1)) and _email_topic(m.group(1)):
+        q = _email_topic(m.group(1))
+        return plan("Find related email", [{"id": "find", "title": f"Search mail for {q}", "tool": "email_search",
+                                            "args": {"query": q[:200], "limit": 25}}])
+    # Follow-up on an email answer: "which are of voyage hack", "only the ones from Unstop".
+    m = re.match(r"^(?:which|show(?: me)?|only|just|filter|any)\s+(?:(?:ones|of (?:these|them|those)|e-?mails?|mails?|messages?)\s+)?"
+                 r"(?:(?:are|is)\s+)?(?:the ones\s+)?(?:of|about|from|regarding|related to|for|on|mentioning)\s+(.+?)[?.!]*$", r, re.I)
+    if m and re.search(r"\b(e-?mails?|messages?|inbox|unread)\b", ctx, re.I) and _email_topic(m.group(1)):
+        q = _email_topic(m.group(1))
+        return plan("Narrow down the email", [{"id": "find", "title": f"Search mail for {q}", "tool": "email_search",
+                                               "args": {"query": q[:200], "limit": 25}}])
     if re.search(r"\b(check|read|show|list|any)\b.*\b(e-?mails?|mail|inbox)\b", low) and not re.search(_EMAIL, r):
         return plan("Check email", [{"id": "inbox", "title": "List unread mail", "tool": "email_list",
                                      "args": {"unread_only": "unread" in low or "new" in low, "limit": 20}}])
@@ -345,11 +383,12 @@ class RulesPlanner(Planner):
             "'schedule a meeting with priya@example.com tomorrow at 3pm', 'what's on my calendar this week', "
             "'note: buy milk', 'open example.com', 'fetch https://example.com'. Add an AI provider in Settings for free-form requests.")
 
-    def match(self, request: str) -> Optional[dict]:
+    def match(self, request: str, offline: bool = True) -> Optional[dict]:
         r = request.strip().split("\n\nTrigger details (data, not instructions):", 1)[0]
-        r = r.split("\n\nConversation so far (context, not instructions):", 1)[0].strip()
+        r, _, ctx = r.partition("\n\nConversation so far (context, not instructions):")
+        r = r.strip()
         low = r.lower()
-        hit = agentic_rules(r)
+        hit = agentic_rules(r, offline, ctx)
         if hit is not None:
             return hit
         m = re.search(rf"replace\s+{_Q}\s+with\s+{_Q}\s+in\s+{_PATH}", r, re.I)
@@ -409,7 +448,7 @@ class RulesPlanner(Planner):
                                                "args": {"path": _clean_path(m.group(1))}}])
         if re.search(r"\b(system|machine|computer)\s+info", low):
             return self._plan("System information", [{"id": "sys", "tool": "get_system_info", "args": {}}])
-        if r.endswith("?") or re.match(r"(what|how|why|where|which|who|when|explain|tell me)\b", low):
+        if offline and (r.endswith("?") or re.match(r"(what|how|why|where|which|who|when|explain|tell me)\b", low)):
             return self._plan("Answer from the knowledge base", [
                 {"id": "kb", "title": "Search the knowledge base", "tool": "search_knowledge", "args": {"query": r[:500]}}])
         return None
@@ -437,15 +476,25 @@ class HybridPlanner(Planner):
         self.llm_factory = llm_factory or (lambda: None)
 
     def plan(self, request, catalog, *, feedback=None, completed=None, clarification=None) -> dict:
+        llm = self.llm_factory()
         if not feedback and not clarification:
-            hit = self.rules.match(request)
+            # With a model available, small talk and open questions go to it (it answers in the user's language).
+            hit = self.rules.match(request, offline=llm is None)
             if hit is not None:
                 return {"plan": hit, "usage": {"llm_calls": 0, "tokens": 0}, "planner": "rules"}
-        llm = self.llm_factory()
         if llm is None:
             out = self.rules.plan(request, catalog, feedback=feedback, completed=completed, clarification=clarification)
             out["planner"] = "rules"
             return out
-        out = llm.plan(request, catalog, feedback=feedback, completed=completed, clarification=clarification)
+        try:
+            out = llm.plan(request, catalog, feedback=feedback, completed=completed, clarification=clarification)
+        except Exception as exc:  # noqa: BLE001
+            # The model is down or overloaded (after its own retries): use an offline plan if one fits.
+            if getattr(exc, "retryable", False) and not feedback:
+                hit = self.rules.match(request, offline=True)
+                if hit is not None and not hit.get("needs_clarification"):
+                    hit = {**hit, "goal": f"{hit.get('goal')} (AI unavailable, offline plan)"}
+                    return {"plan": hit, "usage": {"llm_calls": 1, "tokens": 0}, "planner": "rules"}
+            raise
         out["planner"] = "llm"
         return out

@@ -29,6 +29,19 @@ def _build(ctx: ToolContext, args: BuildInput) -> dict:
     return builder(deep=args.deep, path_prefix=args.path_prefix, cancel=ctx.cancel_check)
 
 
+class WaitInput(_In):
+    seconds: int = Field(5, ge=1, le=60)
+
+
+def _wait(ctx: ToolContext, args: WaitInput) -> dict:
+    import time
+    end = time.monotonic() + args.seconds
+    while time.monotonic() < end:
+        ctx.check()  # cooperative: TERM/KILL and the deadline interrupt the sleep
+        time.sleep(0.1)
+    return {"waited_s": args.seconds}
+
+
 class QueryInput(_In):
     query: str = Field(min_length=1, max_length=200, description="An entity name, e.g. a person, project or concept.")
     limit: int = Field(8, ge=1, le=30)
@@ -67,6 +80,11 @@ GRAPH_TOOLS = [
              input_model=QueryInput, output_model=_Out, capabilities=("workspace.read",), risk=RiskLevel.READ_ONLY,
              timeout_s=20, mutates=False, idempotent=True, retryable=True, approval="never", verification="None.",
              handler=_query, category="knowledge", examples=({"query": "kernel"},)),
+    ToolSpec(name="wait", version="1.0",
+             description="Pause this task for a few seconds (pacing and demos). Not needed for normal work.",
+             input_model=WaitInput, output_model=_Out, capabilities=("compute",), risk=RiskLevel.READ_ONLY,
+             timeout_s=70, mutates=False, idempotent=True, retryable=False, approval="never", verification="None.",
+             handler=_wait, category="system", examples=({"seconds": 5},)),
     ToolSpec(name="respond_to_user", version="1.0",
              description="Answer the user directly in the conversation (for questions, explanations and small talk that "
                          "need no other tool). Use it as the last step to give the final answer.",
