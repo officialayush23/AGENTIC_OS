@@ -30,19 +30,17 @@ log = logging.getLogger(__name__)
 
 HF = "https://huggingface.co"
 
-# Pinned builds (repo @ revision). GPU builds use DirectML (Windows, any DX12 GPU: NVIDIA, AMD, Intel).
+# Pinned builds (repo @ revision), each checked here: it loads with the runtime pip installs on Python 3.10
+# (onnxruntime-genai 0.11.4) and answers correctly. GPU = DirectML (Windows, any DX12 GPU: NVIDIA, AMD, Intel).
 CATALOG: Dict[str, dict] = {
-    "qwen2.5-1.5b-gpu": {
+    "qwen2.5-1.5b-gpu-dml": {
         "label": "Qwen2.5 1.5B Instruct · GPU (DirectML, int4)", "params": "1.5B", "device": "dml",
-        "repo": "amd/OGA_DML_Qwen_Qwen2.5-1.5B-Instruct", "revision": "eb169a108813f01b3d14519fd2d90b7408ae76cb",
-        "size_mb": 1300, "vram_gb": 2, "license": "MIT (AMD build) + Qwen license",
+        "repo": "keystone-systems/Qwen2.5-1.5B-Instruct-onnx-dml-int4", "revision": "f931fb97de0e3330582d332831f8ea3c65d00595",
+        "size_mb": 1295, "vram_gb": 2, "license": "Apache-2.0",
         "note": "Fast on most GPUs. Good for notes, short answers and simple plans.",
-    },
-    "qwen2.5-3b-gpu": {
-        "label": "Qwen2.5 3B Instruct · GPU (DirectML, int4)", "params": "3B", "device": "dml",
-        "repo": "amd/OGA_DML_Qwen_Qwen2.5-3B-Instruct", "revision": "b5b498a98ade72b0f1e0bafb645fcf89e45e626d",
-        "size_mb": 2250, "vram_gb": 4, "license": "MIT (AMD build) + Qwen license",
-        "note": "Better planning and writing. Needs about 4 GB of GPU memory.",
+        "sha256": {"model.onnx": "09d14950e1e362ab5b3e783f1711af9c81793acb2646f30f63effdaae77a11bc",
+                   "model.onnx.data": "6f13389c8f11c0deb0ba855aa5e6450326312576b8bf10f60913f94451f0dfa3",
+                   "tokenizer.json": "3fd169731d2cbde95e10bf356d66d5997fd885dd8dbb6fb4684da3f23b2585d8"},
     },
     "qwen2.5-1.5b-cpu": {
         "label": "Qwen2.5 1.5B Instruct · CPU (int4)", "params": "1.5B", "device": "cpu",
@@ -50,7 +48,15 @@ CATALOG: Dict[str, dict] = {
         "size_mb": 1950, "vram_gb": 0, "license": "Apache-2.0 (Qwen2.5)",
         "note": "Works without a GPU. Slower (several tokens per second).",
     },
+    "qwen2.5-3b-cpu": {
+        "label": "Qwen2.5 3B Instruct · CPU (int4)", "params": "3B", "device": "cpu",
+        "repo": "elbruno/Qwen2.5-3B-Instruct-onnx", "revision": "55c90d88cdc4f2279b5f9116e3afec1c027e64f1",
+        "size_mb": 3260, "vram_gb": 0, "license": "Qwen Research licence (non-commercial)",
+        "note": "Better planning and writing; slower. Needs about 4 GB of RAM.",
+    },
 }
+# Earlier entries whose builds produced garbage; their folders are deleted on the next install.
+RETIRED = ("qwen2.5-1.5b-gpu", "qwen2.5-3b-gpu")
 MODEL_FILES = ("genai_config.json", "model.onnx", "model.onnx.data", "tokenizer.json", "tokenizer_config.json",
                "special_tokens_map.json", "added_tokens.json", "vocab.json", "merges.txt", "chat_template.jinja")
 REQUIRED_FILES = ("genai_config.json", "model.onnx", "tokenizer.json")
@@ -79,7 +85,7 @@ def runtime_status() -> dict:
 
 
 def default_model_for_platform() -> str:
-    return "qwen2.5-1.5b-gpu" if sys.platform == "win32" else "qwen2.5-1.5b-cpu"
+    return "qwen2.5-1.5b-gpu-dml" if sys.platform == "win32" else "qwen2.5-1.5b-cpu"
 
 
 @dataclass
@@ -100,6 +106,15 @@ class InstallJob:
         return {"model": self.model, "running": self.running, "stage": self.stage, "message": self.message,
                 "done_mb": round(self.done_bytes / 2**20), "total_mb": round(self.total_bytes / 2**20), "percent": pct,
                 "error": self.error, "result": self.result, "elapsed_s": int(time.time() - self.started)}
+
+
+def _sha256(path: str) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 22), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 class LocalModelService:
@@ -134,7 +149,8 @@ class LocalModelService:
         return {"folder": self.models_dir, "free_gb": round(free / 2**30, 1) if free is not None else None}
 
     def status(self) -> dict:
-        return {"runtime": runtime_status(), "storage": self.disk(), "installed": self.installed(), "recommended": default_model_for_platform(),
+        retired = [m for m in RETIRED if os.path.isdir(self.path(m))]
+        return {"runtime": runtime_status(), "storage": self.disk(), "retired": retired, "installed": self.installed(), "recommended": default_model_for_platform(),
                 "platform": sys.platform, "python": ".".join(map(str, sys.version_info[:3])),
                 "catalog": [{"id": k, **{x: v[x] for x in ("label", "params", "device", "size_mb", "vram_gb", "note", "license")},
                              "repo": v["repo"], "installed": k in self.installed()} for k, v in CATALOG.items()],
@@ -176,6 +192,8 @@ class LocalModelService:
                     self._pip(["uninstall", "-y", rt["package"], "onnxruntime"])
                 self._pip(["install", "--disable-pip-version-check", "--no-input", "--no-cache-dir", pkg])
                 importlib.invalidate_caches()
+            for old in RETIRED:  # broken earlier builds: free the space
+                self.remove(old)
             job.stage, job.message = "download", f"Downloading {spec['repo']}"
             self._download(job, spec)
             job.stage, job.message = "register", "Adding the local provider"
@@ -217,6 +235,13 @@ class LocalModelService:
             if os.path.exists(target):
                 os.remove(target)
             self._fetch(job, f"{HF}/{spec['repo']}/resolve/{spec['revision']}/{name}", target, sizes[name])
+            want = (spec.get("sha256") or {}).get(name)
+            if want:
+                job.message = f"Checking {name}"
+                if _sha256(target) != want:
+                    os.remove(target)
+                    raise RuntimeError(f"{name} failed its checksum; it was deleted, click Install to download it again")
+            job.message = f"Downloading {spec['repo']}"
         with open(os.path.join(dest, READY_MARK), "w", encoding="utf-8") as fh:
             json.dump({"repo": spec["repo"], "revision": spec["revision"], "device": spec["device"],
                        "installed_at": time.time()}, fh)

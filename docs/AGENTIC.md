@@ -218,8 +218,14 @@ and graph size, and connection status.
   a quantized Qwen2.5 run with ONNX Runtime GenAI. Install = pip-install the runtime into the app's venv
   (Windows: `onnxruntime-genai-directml`, which also runs CPU models; elsewhere `onnxruntime-genai`), download a
   pinned build from Hugging Face (resumable, size-checked), register provider `local`, self-test.
-  Catalog: `amd/OGA_DML_Qwen_Qwen2.5-1.5B-Instruct` and `-3B-` (DirectML int4, any DX12 GPU) and
-  `elbruno/Qwen2.5-1.5B-Instruct-onnx` (CPU int4). On Python 3.10 pip resolves runtime 0.11.4, which reads these builds.
+  Catalog (each checked to load and answer correctly with runtime 0.11.4, the newest pip gives Python 3.10):
+  `keystone-systems/Qwen2.5-1.5B-Instruct-onnx-dml-int4` (DirectML int4, sha256-verified; also runs on CPU),
+  `elbruno/Qwen2.5-1.5B-Instruct-onnx` and `elbruno/Qwen2.5-3B-Instruct-onnx` (CPU int4).
+  AMD's `OGA_DML_Qwen_*` builds were dropped: they produce garbage ("!!!!") on CPU with runtimes 0.11 and 0.20, and a user's
+  GPU self-test of the 3B build ran out of tokens; their folders are deleted on the next install.
+- **Loading**: config keys a runtime does not know (newer builds add `bot_token_id`, `eot_token_id`) are stripped, keeping
+  `genai_config.json.orig`; if the GPU path cannot load, the same build runs on the CPU. JSON guidance uses compact
+  whitespace so a small model cannot pad output until it hits the token limit.
 - **Constrained JSON**: the local provider uses GenAI guidance (`set_guidance("json_schema", …)`), so plans are valid JSON
   even from a 1.5B model. Small models get a compact one-line-per-tool catalog (~1k tokens instead of ~7k), a schema whose
   `tool` field is an enum of real tool names, at most 4 steps, and an instruction not to pad the plan.

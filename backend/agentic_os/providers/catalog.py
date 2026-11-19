@@ -48,8 +48,8 @@ PROVIDER_KINDS = {
     },
     "local": {
         "label": "Local model (this PC)",
-        "default_model": "qwen2.5-1.5b-gpu",
-        "example_models": ["qwen2.5-1.5b-gpu", "qwen2.5-3b-gpu", "qwen2.5-1.5b-cpu"],
+        "default_model": "qwen2.5-1.5b-gpu-dml",
+        "example_models": ["qwen2.5-1.5b-gpu-dml", "qwen2.5-1.5b-cpu", "qwen2.5-3b-cpu"],
         "requires_base_url": False,
         "requires_key": False,
         "structured_modes": ["json_schema", "prompt"],

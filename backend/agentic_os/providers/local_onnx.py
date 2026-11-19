@@ -11,11 +11,13 @@ import json
 import os
 import threading
 import time
+import logging
 from typing import Dict, Optional, Tuple
 
 from .base import ErrorCode, LLMProvider, LLMResult, ProviderCapabilities, ProviderError, Usage, schema_instructions
 from .catalog import PROVIDER_KINDS
 
+log = logging.getLogger(__name__)
 _MODELS: Dict[Tuple[str, str], tuple] = {}
 _MODELS_LOCK = threading.Lock()
 MAX_PROMPT_TOKENS = 12000
@@ -43,18 +45,26 @@ def load_model(path: str, device: str):
         if not os.path.exists(os.path.join(path, "genai_config.json")):
             raise ProviderError(ErrorCode.MODEL_NOT_FOUND, f"no local model at {path}: install one in Settings → Local AI model",
                                 provider_kind="local")
-        try:
-            cfg = og.Config(path)
+        def build(dev: str):
+            cfg = _config(og, path)
             cfg.clear_providers()
-            if device == "dml":
-                cfg.append_provider("dml")
-            elif device == "cuda":
-                cfg.append_provider("cuda")
+            if dev in ("dml", "cuda"):
+                cfg.append_provider(dev)
             model = og.Model(cfg)
-            tok = og.Tokenizer(model)
+            return model, og.Tokenizer(model)
+
+        try:
+            model, tok = build(device)
         except Exception as exc:  # noqa: BLE001
-            raise ProviderError(ErrorCode.NOT_CONFIGURED, f"the local model could not be loaded on {device}: {exc}",
-                                provider_kind="local")
+            if device == "cpu":
+                raise ProviderError(ErrorCode.NOT_CONFIGURED, f"the local model could not be loaded: {exc}", provider_kind="local")
+            # No usable GPU path (driver, runtime build): the same int4 build also runs on the CPU, just slower.
+            log.warning("local model: %s unavailable (%s); running on the CPU", device, exc)
+            try:
+                model, tok = build("cpu")
+            except Exception as exc2:  # noqa: BLE001
+                raise ProviderError(ErrorCode.NOT_CONFIGURED, f"the local model could not be loaded on {device} ({exc}) "
+                                    f"or on the CPU ({exc2})", provider_kind="local")
         try:
             with open(os.path.join(path, "genai_config.json"), encoding="utf-8") as fh:
                 ctx = int(json.load(fh)["model"].get("context_length") or 4096)
@@ -62,6 +72,38 @@ def load_model(path: str, device: str):
             ctx = 4096
         _MODELS[key] = (model, tok, threading.Lock(), ctx)
         return _MODELS[key]
+
+
+def _config(og, path: str):
+    """og.Config, dropping config keys this runtime version does not know (newer model builds add some)."""
+    import re
+    for _ in range(8):
+        try:
+            return og.Config(path)
+        except Exception as exc:  # noqa: BLE001
+            m = re.search(r'Unknown value "([A-Za-z0-9_]+)"', str(exc))
+            if not m:
+                raise
+            cfg_path = os.path.join(path, "genai_config.json")
+            with open(cfg_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+
+            def strip(node) -> bool:
+                if isinstance(node, dict):
+                    if m.group(1) in node:
+                        node.pop(m.group(1))
+                        return True
+                    return any(strip(v) for v in node.values())
+                return False
+
+            if not strip(data):
+                raise
+            backup = cfg_path + ".orig"
+            if not os.path.exists(backup):
+                os.replace(cfg_path, backup)
+            with open(cfg_path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2)
+    return og.Config(path)
 
 
 def chatml(system: str, user: str) -> str:
@@ -105,8 +147,8 @@ class LocalOnnxProvider(LLMProvider):
                 opts = {"max_length": len(ids) + max_out, "do_sample": False}
                 params.set_search_options(**opts)
                 if schema is not None and mode != "prompt":
-                    try:
-                        params.set_guidance("json_schema", json.dumps(schema))
+                    try:  # compact JSON: a small model cannot then pad with endless whitespace
+                        params.set_guidance("json_schema", json.dumps({**schema, "x-guidance": {"whitespace_flexible": False}}))
                     except Exception:  # noqa: BLE001 - older runtimes: prompt-only JSON
                         pass
                 gen = og.Generator(model, params)
@@ -124,6 +166,9 @@ class LocalOnnxProvider(LLMProvider):
             except Exception as exc:  # noqa: BLE001
                 raise ProviderError(ErrorCode.SERVER_ERROR, f"local generation failed: {exc}", provider_kind=self.kind)
         finish = "length" if n >= max_out else "stop"
+        if schema is not None and finish == "length":
+            raise ProviderError(ErrorCode.OUTPUT_TRUNCATED, f"the local model did not finish its JSON within {max_out} tokens "
+                                f"(it began: {out.strip()[:60]!r})", provider_kind=self.kind)
         return LLMResult(text=out.strip(), usage=Usage(input_tokens=len(ids), output_tokens=n),
                          latency_ms=int((time.monotonic() - started) * 1000), model=self.config.model,
                          provider_kind=self.kind, finish_reason=finish)

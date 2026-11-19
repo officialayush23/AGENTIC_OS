@@ -247,20 +247,20 @@ class AppState:
 
     def _test_local(self) -> dict:
         """Connection test plus a sanity check that the output is real text (catches a model on the wrong device)."""
+        # Plain text first: it shows clearly whether the model produces real words on this device.
+        try:
+            text = self.providers.build("local").generate_text(
+                "You are a test.", "Reply with exactly one word: ready", max_output_tokens=8).text
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "structured_output_ok": False,
+                    "error": {"code": "LOCAL_TEST_FAILED", "message": str(getattr(exc, "message", exc))}}
+        if "ready" not in text.lower():
+            return {"ok": False, "structured_output_ok": False,
+                    "error": {"code": "LOCAL_OUTPUT_GARBLED", "message": f"the model's output looks wrong ({text[:40]!r}); "
+                              "try the CPU model or update your GPU driver"}}
         r = self.providers.test("local")
         if r.get("ok") and not r.get("structured_output_ok"):
             r["ok"] = False
-        if r.get("ok"):
-            try:
-                text = self.providers.build("local").generate_text(
-                    "You are a test.", "Reply with exactly one word: ready", max_output_tokens=8).text
-                if "ready" not in text.lower():
-                    r["ok"] = False
-                    r["error"] = {"code": "LOCAL_OUTPUT_GARBLED", "message": f"the model's output looks wrong ({text[:40]!r}); "
-                                  "try the CPU model or update your GPU driver"}
-            except Exception as exc:  # noqa: BLE001
-                r["ok"] = False
-                r["error"] = {"code": "LOCAL_TEST_FAILED", "message": str(getattr(exc, "message", exc))}
         if not r.get("ok") and not r.get("error"):
             r["error"] = {"code": "LOCAL_TEST_FAILED", "message": "the model did not return the expected JSON"}
         return r

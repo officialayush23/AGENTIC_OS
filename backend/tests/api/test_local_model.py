@@ -82,7 +82,7 @@ def test_chain_falls_back_on_quota_but_not_on_bad_request():
 
 def test_local_model_api(client):
     s = client.get("/api/local-model").json()
-    assert {c["id"] for c in s["catalog"]} >= {"qwen2.5-1.5b-gpu", "qwen2.5-1.5b-cpu"} and s["use"] == "off"
+    assert {c["id"] for c in s["catalog"]} >= {"qwen2.5-1.5b-gpu-dml", "qwen2.5-1.5b-cpu", "qwen2.5-3b-cpu"} and s["use"] == "off"
     assert client.post("/api/local-model/install", json={"model": "nope"}).status_code == 404
     assert client.put("/api/local-model/use", json={"use": "main"}).status_code == 400
     # register as the install would, then switch how it is used
